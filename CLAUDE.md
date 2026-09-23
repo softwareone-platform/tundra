@@ -23,7 +23,11 @@ LICENSE                             covers everything under the root
 
 **A plugin's folder is the unit that gets copied, so everything a plugin needs lives inside it.** A copied plugin cannot reach a `../shared-utils` outside its own directory, and organisation sync packages each plugin folder on its own.
 
-A plugin is registered in exactly one marketplace. Two entries means two identities, two caches and two update paths.
+A plugin is registered in exactly one marketplace, and for a plugin listed here that marketplace is this one. The repository a remote plugin lives in carries no `marketplace.json` of its own, and its README installs from this repository's URL. Two listings would give the same plugin two identities, `<plugin>@tundra` and `<plugin>@<theirs>`, with nothing to stop a user installing both, and two catalogues to keep in step.
+
+Sharing the name `tundra` between two catalogues is not a way round that. Claude Code registers one marketplace per name and replaces the first when a second of the same name is added, with no warning, and a plugin installed from the replaced catalogue then fails to load with `Plugin <name> not found in marketplace tundra`.
+
+A remote plugin's own repository therefore tests locally with `claude --plugin-dir plugins/<name>` rather than a local `marketplace add`.
 
 ## Versions live in plugin.json, and only there
 

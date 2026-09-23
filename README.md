@@ -16,6 +16,8 @@ Then install the plugins you want from it:
 
 Run `/reload-plugins` afterwards to activate them.
 
+Claude Code leaves auto-update off for a marketplace like this one, so you will not receive new versions until you turn it on: `/plugin` → **Marketplaces** → `tundra` → **Enable auto-update**.
+
 Use the full HTTPS URL above. The `softwareone-platform/tundra` shorthand is also accepted, but it clones over SSH, which is a different instruction.
 
 ## What is in it
