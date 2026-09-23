@@ -1,0 +1,9 @@
+# the working tree is LF on every platform, not just in the index.
+# a plugin's tests that compare files against strings joined with "\n" report everything stale on a CRLF checkout,
+# and a shell script must stay LF or sh rejects its shebang.
+* text=auto eol=lf
+
+# batch labels and `goto` have a history of breaking on LF-only files.
+*.cmd text eol=crlf
+
+*.png binary

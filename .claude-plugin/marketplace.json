@@ -1,0 +1,54 @@
+{
+  "name": "tundra",
+  "description": "Claude Code plugins from SoftwareOne Platform: the issue-to-PR toolkit of adversarial review, test authoring, PR lifecycle, and the pipeline that chains them",
+  "owner": {
+    "name": "pbc-swo",
+    "url": "https://github.com/softwareone-platform/tundra"
+  },
+  "plugins": [
+    {
+      "name": "issue-to-pr-pipeline",
+      "description": "Issue-to-PR orchestration: resolve-issue chains the review, test, and PR-lifecycle skills into one resumable pipeline gated on plan approval, pausing again wherever a decision is yours; resolve-issue-dashboard is a read-only dashboard that visualises a run; resolve-issue-learnings harvests learnings across runs",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/softwareone-platform/issue-to-pr.git",
+        "path": "plugins/issue-to-pr-pipeline",
+        "ref": "main",
+        "sha": "b365e435fd96e3dbd078e81173540f2cd4f43e0b"
+      }
+    },
+    {
+      "name": "disconfirm-first",
+      "description": "Adversarial review skills: review-issue-fact (issue), review-plan-risk (design), review-code-risk (implementation)",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/softwareone-platform/issue-to-pr.git",
+        "path": "plugins/disconfirm-first",
+        "ref": "main",
+        "sha": "b365e435fd96e3dbd078e81173540f2cd4f43e0b"
+      }
+    },
+    {
+      "name": "test-authoring",
+      "description": "Test authoring plugin: scan-test-gaps, add/update test workflows, optional setup-test-context profiler; rules are read from the plugin, not copied per-repo",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/softwareone-platform/issue-to-pr.git",
+        "path": "plugins/test-authoring",
+        "ref": "main",
+        "sha": "b365e435fd96e3dbd078e81173540f2cd4f43e0b"
+      }
+    },
+    {
+      "name": "pr-lifecycle",
+      "description": "Team-agnostic PR lifecycle skills (Azure DevOps or GitHub): open-pr, resolve-pr-comments",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/softwareone-platform/issue-to-pr.git",
+        "path": "plugins/pr-lifecycle",
+        "ref": "main",
+        "sha": "b365e435fd96e3dbd078e81173540f2cd4f43e0b"
+      }
+    }
+  ]
+}
