@@ -28,6 +28,7 @@ Use the full HTTPS URL above. The `softwareone-platform/tundra` shorthand is als
 | [`disconfirm-first`](#disconfirm-first) | Adversarial review of an issue, a plan, or an implemented fix |
 | [`test-authoring`](#test-authoring) | Unit and integration test authoring, each written by one agent and checked by another |
 | [`pr-lifecycle`](#pr-lifecycle) | Opening a pull request and resolving its review comments, on Azure DevOps or GitHub |
+| [`whoami`](#whoami) | A self-assessment from your code, your prompts, and your CLAUDE.md, concluding how you work |
 
 ### From [issue-to-pr](https://github.com/softwareone-platform/issue-to-pr)
 
@@ -64,6 +65,14 @@ Finds test gaps and writes or refreshes unit and integration tests. Every test c
 `open-pr` opens a PR whose title and description follow your own past PRs, and `resolve-pr-comments` triages a PR's review threads and drafts the fixes and replies. Both show you what they will do and wait for a yes before changing anything outside your machine.
 
 [Full details of pr-lifecycle](https://github.com/softwareone-platform/issue-to-pr#pr-lifecycle)
+
+### From this repository
+
+#### whoami
+
+`/whoami:whoami` reads the code you wrote by hand, the prompts you gave Claude when it implemented for you, and the instructions you left it in `CLAUDE.md`. It finds the patterns that recur, tests each against what could explain it away, and concludes what kind of question you reliably get right and what kind you reliably miss. It reads only the repositories you point it at, code only through git, and your prompts and instructions only if you agree. It is an experiment.
+
+[Full details of whoami](plugins/whoami/README.md)
 
 ## Licence
 
