@@ -359,12 +359,27 @@ def test_escaping():
 # ----- the page loads nothing ----------------------------------------------------
 
 def test_html_loads_nothing():
+    url_target = r"""url\(\s*["']?\s*([^"')\s]+)"""
+
+    # a data: URI carries its content inline, so only a url() pointing anywhere else fetches something
+    def fetched(text):
+        return [u for u in re.findall(url_target, text) if not u.startswith("data:")]
+
+    # written by hand: each url() form a stylesheet accepts that points outside the page, then one that does not,
+    # so the rule below is shown to catch a remote or relative target rather than pass everything
+    for css, want in (("url(http://x/a.png)", ["http://x/a.png"]), ('url("https://x")', ["https://x"]),
+                      ("url('//cdn/x')", ["//cdn/x"]), ("url(a.png)", ["a.png"]),
+                      ('url( "data:image/svg+xml,%3Csvg" )', [])):
+        check("url() target outside the page in %s" % css, fetched(css), want)
+
     for name, doc in (("minimal", _doc()), ("full", _full_doc())):
         page = _html(doc)
         check(name + ": no remote src or href", re.findall(r"""(?:src|href)\s*=\s*["']?\s*https?:""", page, re.I), [])
         check(name + ": no script element", "<script" in page.lower(), False)
         check(name + ": no link element", "<link" in page.lower(), False)
-        check(name + ": no CSS import or url()", ("@import" in page, "url(" in page), (False, False))
+        # an empty match list would pass the data: check without having looked at anything
+        check(name + ": a url() value found", len(re.findall(url_target, page)) > 0, True)
+        check(name + ": no CSS import, and no url() but a data: URI", ("@import" in page, fetched(page)), (False, []))
 
 
 # ----- structure -----------------------------------------------------------------
@@ -394,8 +409,9 @@ def test_confidence_labels():
     page = _html(_full_doc())
     check("verified renders the verified label",
           '<td class="conf"><span class="badge verified">Verified</span></td>' in _section(page, "Strengths"), True)
-    check("depends renders the label followed by its constraint",
-          '<td class="conf"><span class="badge depends">Depends on: the load</span></td>' in _section(page, "Gaps"), True)
+    check("depends renders its short label, carrying its constraint as a tooltip",
+          '<td class="conf"><span class="badge depends" tabindex="0" title="Depends on: the load"'
+          ' data-tip="Depends on: the load">Conditional</span></td>' in _section(page, "Gaps"), True)
 
 
 def test_evidence_in_details():
@@ -429,8 +445,13 @@ def test_related_links():
     page = _html(_full_doc())
     # written by hand: each related pattern is an anchor to its row, joined by a line break
     links = '<a href="#s1">name s1</a><br><a href="#g1">name g1</a>'
-    check("axis card lists its related patterns as links",
-          '<div class="links">Related patterns<br>%s</div>' % links in page, True)
+    # written by hand: each side of the axis card lists its own related patterns, as anchors under a heading
+    check("axis card lists each related pattern as a link inside its side",
+          ('<div class="side strong"><b>Reliably gets right</b>strong side'
+           '<div class="links"><h4>Related patterns</h4><a href="#s1">name s1</a></div></div>' in page,
+           '<div class="side weak"><b>Reliably misses</b>weak side'
+           '<div class="links"><h4>Related patterns</h4><a href="#g1">name g1</a></div></div>' in page),
+          (True, True))
     check("implication row lists its related patterns as links",
           '<tr><th scope="row">reviews</th><td>ask early</td><td>%s</td></tr>' % links
           in _section(page, "What this means for your work"), True)
@@ -456,7 +477,7 @@ def test_summary_title_scope():
     # written by hand: json.dumps with its default separators and the non-ASCII kept as is, then escaped
     doc = _doc(scope={"repositories": [{"name": "repo-a", "period": "\u7e41"}, "repo-b"]})
     check("a dict in a scope list rendered as JSON", _section(_html(doc), "Scope"),
-          '<h2>Scope</h2><div class="tablewrap"><table><tbody><tr><th scope="row">repositories</th>'
+          '<h2>Scope</h2><div class="tablewrap"><table class="scope"><tbody><tr><th scope="row">repositories</th>'
           '<td>{&quot;name&quot;: &quot;repo-a&quot;, &quot;period&quot;: &quot;\u7e41&quot;}; repo-b</td>'
           '</tr></tbody></table></div>')
 
@@ -526,8 +547,10 @@ def test_markdown_cells():
                labels={"area": "x|\\area", "related": "x|\\related"})
     check("fixture: backslash cell document is valid", rr.validate(doc), [])
     lines = _md_lines(doc)
-    # written by hand: C, colon, two backslashes, dir
-    check("backslash doubled in a confidence cell", "| name s2 | code | Depends on: C:\\\\dir |" in lines, True)
+    # the constraint is written in a line under the table, so the cell holds only the short label
+    check("conditional cell holds only its label", "| name s2 | code | Conditional |" in lines, True)
+    # written by hand: the pattern name, an em dash, then C, colon, two backslashes, dir
+    check("backslash doubled in a condition line", "- name s2 \u2014 Depends on: C:\\\\dir" in lines, True)
     # the backslash is doubled before the pipe is escaped,
     # or the escape added for the pipe would itself be doubled and leave the pipe live.
     # written by hand: a, three backslashes, pipe, b
@@ -546,7 +569,7 @@ def test_markdown_tables():
     check("axis lines with their labels", _has_block(lines, [
         "**axis one**", "- Reliably gets right \u2014 strong side", "- Reliably misses \u2014 weak side", ""]), True)
     for heading, row in (("Strengths", "| name s1 | code | Verified |"),
-                         ("Gaps", "| name g1 | code | Depends on: the load |")):
+                         ("Gaps", "| name g1 | code | Conditional |")):
         check("%s table with its label" % heading, _has_block(lines, [
             "## " + heading, "", "| Pattern | Source | Confidence |", "|---|---|---|", row]), True)
     # a trade-off is long prose that would wrap a terminal table, so it is left to the HTML like a description
@@ -668,13 +691,16 @@ def test_markdown_axis_escaping():
 def test_markdown_three_column_pattern_tables():
     lines = _md_lines(_full_doc())
     # written by hand: each group is a heading, a three-column head, and one row per pattern,
-    # closed by a blank line before the next heading
-    for heading, row, following in (("Strengths", "| name s1 | code | Verified |", "## Gaps"),
-                                    ("Gaps", "| name g1 | code | Depends on: the load |", "## Ways of working"),
-                                    ("Ways of working", "| name y1 | code | Verified |",
-                                     "## What this means for your work")):
+    # closed by a blank line, then a line per conditional pattern naming its constraint and another blank line,
+    # then the next heading
+    for heading, row, conditions, following in (
+            ("Strengths", "| name s1 | code | Verified |", [], "## Gaps"),
+            ("Gaps", "| name g1 | code | Conditional |", ["- name g1 \u2014 Depends on: the load", ""],
+             "## Ways of working"),
+            ("Ways of working", "| name y1 | code | Verified |", [], "## What this means for your work")):
         check("%s table holds exactly the head and its row" % heading, _has_block(lines, [
-            "## " + heading, "", "| Pattern | Source | Confidence |", "|---|---|---|", row, "", following]), True)
+            "## " + heading, "", "| Pattern | Source | Confidence |", "|---|---|---|", row, ""]
+            + conditions + [following]), True)
     text = "\n".join(lines)
     for absent in ("desc s1", "desc g1", "desc y1", "speed", "rework",
                    "Description", "What it gives", "What it costs"):
@@ -889,9 +915,10 @@ def test_validation_diagram_problem_order():
         "diagrams[0].lanes[3].steps[0]: 'detail' is not a list of text"])
 
 
-# written by hand from the diagram in _full_doc: two titled lanes, the first with a strong step carrying two details
-# and a note on its arrow, then a weak step, the second with one step of no tone, then the caption
-_FULL_FIGURE = ('<figure class="flow"><div class="lanes n2">'
+# written by hand from the diagram in _full_doc: the caption leads, then two titled lanes,
+# the first with a strong step carrying two details and a note on its arrow, then a weak step,
+# the second with one step of no tone
+_FULL_FIGURE = ('<figure class="flow"><figcaption>a flow</figcaption><div class="lanes n2">'
                 '<div class="lane"><div class="lane-title">lane one</div>'
                 '<div class="step strong"><div class="step-text">step one</div>'
                 '<ul><li>detail one</li><li>detail two</li></ul></div>'
@@ -899,14 +926,14 @@ _FULL_FIGURE = ('<figure class="flow"><div class="lanes n2">'
                 '<div class="step weak"><div class="step-text">step two</div></div></div>'
                 '<div class="lane"><div class="lane-title">lane two</div>'
                 '<div class="step neutral"><div class="step-text">step three</div></div></div>'
-                '</div><figcaption>a flow</figcaption></figure>')
+                '</div></figure>')
 
 _ARROW = '<div class="arrow"><span class="arrow-mark">&#8595;</span></div>'
 
 
 def _one_step_figure(text, caption):
-    return ('<figure class="flow"><div class="lanes n1"><div class="lane"><div class="step neutral">'
-            '<div class="step-text">%s</div></div></div></div><figcaption>%s</figcaption></figure>' % (text, caption))
+    return ('<figure class="flow"><figcaption>%s</figcaption><div class="lanes n1"><div class="lane">'
+            '<div class="step neutral"><div class="step-text">%s</div></div></div></div></figure>' % (caption, text))
 
 
 def test_diagram_html_structure():
@@ -917,7 +944,8 @@ def test_diagram_html_structure():
     for n in (1, 2, 3):
         got = rr.diagram_html(_diagram([_lane([_step("step %d" % i)], title="lane %d" % i) for i in range(1, n + 1)]))
         check("%d lanes: the lanes class carries the count" % n,
-              got.startswith('<figure class="flow"><div class="lanes n%d"><div class="lane">' % n), True)
+              got.startswith('<figure class="flow"><figcaption>a flow</figcaption>'
+                             '<div class="lanes n%d"><div class="lane">' % n), True)
         check("%d lanes: one lane div per lane" % n, got.count('<div class="lane">'), n)
         check("%d lanes: each title in its lane" % n,
               [('<div class="lane"><div class="lane-title">lane %d</div>' % i) in got for i in range(1, n + 1)],
@@ -968,9 +996,10 @@ def test_diagram_html_arrows():
 def test_diagram_html_placement():
     page = _html(_full_doc())
     summary = _section(page, "Summary")
-    # written by hand: the close of the axis links, the axis card, and the axes block, then the figure
+    # written by hand: the close of the weak side's links, the weak side, the sides, the axis card,
+    # and the axes block, then the figure
     check("figure follows the axes block at the end of the summary",
-          summary.endswith('<a href="#g1">name g1</a></div></div></div>' + _FULL_FIGURE), True)
+          summary.endswith('<a href="#g1">name g1</a></div></div></div></div></div>' + _FULL_FIGURE), True)
     check("figure rendered once on the page", page.count("<figure"), 1)
 
     first = _diagram([_lane([_step("first")])], caption="one")
@@ -983,7 +1012,7 @@ def test_diagram_html_placement():
 def test_diagram_css():
     page = _html(_full_doc())
     style = page[page.index("<style>"):page.index("</style>")]
-    for selector in ("figure.flow", ".lanes", ".lane", ".lane-title", ".step", ".step.strong", ".step.weak",
+    for selector in ("figure", ".lanes", ".lane", ".lane-title", ".step", ".step.strong", ".step.weak",
                      ".step-text", ".arrow", ".arrow-mark", ".arrow-note", "figcaption"):
         check("CSS rule for %s" % selector, (selector + " {") in style, True)
     # lanes are compared side by side, one column per lane
@@ -991,8 +1020,12 @@ def test_diagram_css():
     check("three lanes take three columns", ".lanes.n3 { grid-template-columns:1fr 1fr 1fr; }" in style, True)
     check("lanes stack on a narrow screen", ".lanes.n2, .lanes.n3 { grid-template-columns:1fr; }" in style, True)
     # a tone takes the same colours as the axes
-    check("strong step takes the strong side colour", ".step.strong { background:var(--strong-bg);" in style, True)
-    check("weak step takes the weak side colour", ".step.weak { background:var(--weak-bg);" in style, True)
+    check("strong step takes the strong side colour",
+          (".step.strong { background:var(--right-wash);" in style, ".side.strong { background:var(--right-wash); }" in style),
+          (True, True))
+    check("weak step takes the weak side colour",
+          (".step.weak { background:var(--miss-wash);" in style, ".side.weak { background:var(--miss-wash); }" in style),
+          (True, True))
     check("old preformatted figure rule gone", "figure pre" in style, False)
     check("no pre element on the page", "<pre" in page, False)
 
@@ -1125,6 +1158,273 @@ def test_markdown_diagram_placement():
           ["1. first", "", "*one*", "", "1. second", "", "*two*", ""])
 
 
+# ----- confidence badges and conditions ------------------------------------------
+
+_LOAD = {"level": "depends", "on": "the load"}
+
+
+def test_badge_html():
+    # written by hand: a verified badge is a bare span, since it has no constraint to show
+    verified = rr.badge_html({"level": "verified"}, rr.LABELS)
+    check("verified badge is a bare span", verified, '<span class="badge verified">Verified</span>')
+    check("verified badge has no tabindex, title, or tip",
+          ("tabindex" in verified, "title=" in verified, "data-tip" in verified), (False, False, False))
+
+    depends = rr.badge_html(_LOAD, rr.LABELS)
+    # written by hand: the short label as the text, the constraint in both the title and the tip
+    check("depends badge carries its constraint", depends,
+          '<span class="badge depends" tabindex="0" title="Depends on: the load"'
+          ' data-tip="Depends on: the load">Conditional</span>')
+    title = re.findall(r'title="(.*?)" data-tip="', depends)
+    tip = re.findall(r'data-tip="(.*?)">', depends)
+    check("title and tip hold the same text", (title, tip), (["Depends on: the load"], ["Depends on: the load"]))
+    check("title is the constraint text", title == [rr.constraint_text(_LOAD, rr.LABELS)], True)
+
+    m, e = _markup, _escaped
+    lab = rr.labels_for({"labels": {"depends": m("label-depends"), "conditional": m("label-conditional"),
+                                    "verified": m("label-verified")}})
+    got = rr.badge_html({"level": "depends", "on": m("on")}, lab)
+    # written by hand: the label, a colon and a space, then the constraint, each escaped, in both attributes
+    tip_text = "%s: %s" % (e("label-depends"), e("on"))
+    check("markup escaped in the depends badge", got,
+          '<span class="badge depends" tabindex="0" title="%s" data-tip="%s">%s</span>' % (
+              tip_text, tip_text, e("label-conditional")))
+    check("markup escaped in the verified badge", rr.badge_html({"level": "verified"}, lab),
+          '<span class="badge verified">%s</span>' % e("label-verified"))
+    # the value runs to the quote that closes the attribute, so a raw quote inside it would show up here
+    for name, pattern in (("title", r'title="(.*?)" data-tip="'), ("data-tip", r'data-tip="(.*?)">')):
+        values = re.findall(pattern, got)
+        # an empty match list would pass the raw-quote check without having looked at anything
+        check("a %s attribute found" % name, len(values) > 0, True)
+        check("no raw quote inside a %s attribute" % name, [v for v in values if '"' in v], [])
+    check("no raw script tag in the badge", "<script" in got, False)
+
+
+def test_constraint_and_confidence_text():
+    check("verified has no constraint", rr.constraint_text({"level": "verified"}, rr.LABELS), "")
+    # the level decides, so a stray on beside a verified level is not shown
+    check("verified ignores a stray on", rr.constraint_text({"level": "verified", "on": "x"}, rr.LABELS), "")
+    # written by hand: the depends label, a colon and a space, then what it depends on
+    check("depends constraint", rr.constraint_text(_LOAD, rr.LABELS), "Depends on: the load")
+    only = rr.labels_for({"labels": {"depends": "Only when"}})
+    check("overridden depends label leads the constraint", rr.constraint_text(_LOAD, only), "Only when: the load")
+
+    check("verified confidence text", rr.confidence_text({"level": "verified"}, rr.LABELS), "Verified")
+    check("depends confidence text is the short label", rr.confidence_text(_LOAD, rr.LABELS), "Conditional")
+    lab = rr.labels_for({"labels": {"verified": "Checked", "conditional": "Maybe"}})
+    check("overridden verified label", rr.confidence_text({"level": "verified"}, lab), "Checked")
+    check("overridden conditional label", rr.confidence_text(_LOAD, lab), "Maybe")
+    # a column that held the constraint would grow to fit it, so the constraint never reaches the short label
+    check("depends confidence text never holds the constraint",
+          ("the load" in rr.confidence_text(_LOAD, rr.LABELS), "Depends on" in rr.confidence_text(_LOAD, rr.LABELS)),
+          (False, False))
+
+
+def test_conditional_label_localised():
+    check("English conditional label", rr.LABELS["conditional"], "Conditional")
+    doc = _full_doc()
+    doc["labels"] = {"conditional": "\u689d\u4ef6\u5f0f", "depends": "\u53d6\u6c7a\u65bc"}
+    page = _html(doc)
+    gaps = _section(page, "Gaps")
+    # written by hand: the localised short label as the badge text, the localised depends label in the tooltip
+    check("localised badge in the HTML",
+          '<td class="conf"><span class="badge depends" tabindex="0" title="\u53d6\u6c7a\u65bc: the load"'
+          ' data-tip="\u53d6\u6c7a\u65bc: the load">\u689d\u4ef6\u5f0f</span></td>' in gaps, True)
+    check("localised depends label heads the evidence block", "<h4>\u53d6\u6c7a\u65bc</h4><p>the load</p>" in gaps, True)
+    check("English labels gone from the page", ("Conditional" in page, "Depends on" in page), (False, False))
+
+    lines = _md_lines(doc)
+    check("localised label in the Markdown confidence cell", "| name g1 | code | \u689d\u4ef6\u5f0f |" in lines, True)
+    check("localised depends label in the Markdown condition line",
+          "- name g1 \u2014 \u53d6\u6c7a\u65bc: the load" in lines, True)
+    text = "\n".join(lines)
+    check("English labels gone from the Markdown", ("Conditional" in text, "Depends on" in text), (False, False))
+
+
+def test_evidence_depends_block():
+    p = _pattern("s1", confidence={"level": "depends", "on": "the load"}, exceptions=[{"text": "exception of s1"}],
+                 calibration="3 of 10 elsewhere", checked="read every script")
+    check("fixture: depends strength document is valid", rr.validate(_doc(strengths=[p])), [])
+    # written by hand: instances, exceptions, then what it depends on, then calibration and what was checked
+    full = ('<details><summary>Evidence</summary>'
+            '<h4>Instances</h4><ul><li>instance one of s1 <span class="ref">ref one of s1</span></li>'
+            '<li>instance two of s1 <span class="ref">ref two of s1</span></li></ul>'
+            '<h4>Exceptions</h4><ul><li>exception of s1</li></ul>'
+            '<h4>Depends on</h4><p>the load</p>'
+            '<h4>Against the rest of the repository</h4><p>3 of 10 elsewhere</p>'
+            '<h4>What was checked</h4><p>read every script</p></details>')
+    check("depends block between exceptions and calibration", rr.evidence_html(p, rr.LABELS), full)
+    check("depends block rendered in the page", full in _section(_html(_doc(strengths=[p])), "Strengths"), True)
+
+    # written by hand: a verified pattern holds only its instances
+    check("verified pattern has no depends block", rr.evidence_html(_pattern("g1"), rr.LABELS),
+          '<details><summary>Evidence</summary>'
+          '<h4>Instances</h4><ul><li>instance one of g1 <span class="ref">ref one of g1</span></li>'
+          '<li>instance two of g1 <span class="ref">ref two of g1</span></li></ul></details>')
+
+    got = rr.evidence_html(_pattern("g1", confidence={"level": "depends", "on": _markup("on")}), rr.LABELS)
+    check("on escaped in the depends block", "<h4>Depends on</h4><p>%s</p>" % _escaped("on") in got, True)
+    check("no raw script tag in the evidence", "<script" in got, False)
+
+    got = rr.evidence_html(_pattern("g1", confidence=_LOAD), rr.labels_for({"labels": {"depends": "Only when"}}))
+    check("overridden depends label heads the block",
+          ("<h4>Only when</h4><p>the load</p>" in got, "Depends on" in got), (True, False))
+
+
+_HEAD = ["| Pattern | Source | Confidence |", "|---|---|---|"]
+
+
+def test_markdown_conditions_list():
+    doc = _doc(strengths=[_pattern("s1", exceptions=[], confidence={"level": "depends", "on": "load one"}),
+                          _pattern("s2", exceptions=[]),
+                          _pattern("s3", exceptions=[], confidence={"level": "depends", "on": "load three"})],
+               gaps=[_pattern("g1")])
+    check("fixture: conditions document is valid", rr.validate(doc), [])
+    lines = _md_lines(doc)
+    # written by hand: the conditional patterns of a group under its table in document order, the verified one left out,
+    # then a blank line, and a group with no conditional pattern closed by its one blank line alone
+    check("conditions listed per group under its table", lines[lines.index("## Strengths"):], [
+        "## Strengths", ""] + _HEAD + [
+        "| name s1 | code | Conditional |",
+        "| name s2 | code | Verified |",
+        "| name s3 | code | Conditional |",
+        "",
+        "- name s1 \u2014 Depends on: load one",
+        "- name s3 \u2014 Depends on: load three",
+        "",
+        "## Gaps", ""] + _HEAD + [
+        "| name g1 | code | Verified |",
+        "",
+        "Full report: `OUT`"])
+
+    doc = _doc(strengths=[_pattern("s1", exceptions=[], confidence={"level": "depends", "on": "strength load"})],
+               gaps=[_pattern("g1", confidence={"level": "depends", "on": "gap load"})])
+    lines = _md_lines(doc)
+    # written by hand: each group lists only its own conditional pattern
+    check("each group lists only its own conditions", lines[lines.index("## Strengths"):], [
+        "## Strengths", ""] + _HEAD + [
+        "| name s1 | code | Conditional |", "",
+        "- name s1 \u2014 Depends on: strength load", "",
+        "## Gaps", ""] + _HEAD + [
+        "| name g1 | code | Conditional |", "",
+        "- name g1 \u2014 Depends on: gap load", "",
+        "Full report: `OUT`"])
+
+    doc = _doc(strengths=[_pattern("s1", exceptions=[], name="name\none",
+                                   confidence={"level": "depends", "on": "load\none"})])
+    lines = _md_lines(doc)
+    # written by hand: each line break becomes one space, so the list item stays on one line
+    check("line breaks flattened in a condition line", "- name one \u2014 Depends on: load one" in lines, True)
+    check("no condition split onto a second line", [ln for ln in lines if ln.startswith("one")], [])
+
+    doc = _doc(strengths=[_pattern("s1", exceptions=[], name="a\\|b",
+                                   confidence={"level": "depends", "on": "C:\\dir|x"})])
+    # a condition line is prose, not a table cell, so a pipe stays as typed while a backslash is doubled.
+    # written by hand: a, two backslashes, pipe, b, then C, colon, two backslashes, dir, pipe, x
+    check("condition line escaped as prose", "- a\\\\|b \u2014 Depends on: C:\\\\dir|x" in _md_lines(doc), True)
+
+    doc = _doc(strengths=[_pattern("s1", exceptions=[], confidence=_LOAD)], labels={"depends": "Only when"})
+    check("overridden depends label in the condition line", "- name s1 \u2014 Only when: the load" in _md_lines(doc),
+          True)
+
+
+# ----- axis links ----------------------------------------------------------------
+
+def _axis_doc(patterns=None, labels=None):
+    axis = {"name": "axis one", "strong": "strong side", "weak": "weak side"}
+    if patterns is not None:
+        axis["patterns"] = patterns
+    doc = _doc(summary={"text": "the summary", "axes": [axis]},
+               strengths=[_pattern("s1", exceptions=[]), _pattern("s2", exceptions=[])],
+               gaps=[_pattern("g1"), _pattern("g2")],
+               styles=[_pattern("y1", gives="g", costs="c"), _pattern("y2", gives="g", costs="c")])
+    if labels is not None:
+        doc["labels"] = labels
+    return doc
+
+
+def test_axis_link_split():
+    # the ids are given out of document order and mixed across groups, so each side keeps the order as given
+    doc = _axis_doc(["g2", "y1", "s2", "g1", "s1", "y2"])
+    check("fixture: mixed axis document is valid", rr.validate(doc), [])
+    page = _html(doc)
+    # written by hand: strengths inside the strong side, gaps inside the weak side, ways of working after both sides
+    check("axis links split by group", '<div class="axis"><h3>axis one</h3><div class="sides">'
+          '<div class="side strong"><b>Reliably gets right</b>strong side'
+          '<div class="links"><h4>Related patterns</h4><a href="#s2">name s2</a><br><a href="#s1">name s1</a></div></div>'
+          '<div class="side weak"><b>Reliably misses</b>weak side'
+          '<div class="links"><h4>Related patterns</h4><a href="#g2">name g2</a><br><a href="#g1">name g1</a></div></div>'
+          '</div><div class="links"><h4>Ways of working</h4><a href="#y1">name y1</a><br><a href="#y2">name y2</a></div>'
+          '</div>' in page, True)
+    check("one links block per group", page.count('<div class="links">'), 3)
+
+    page = _html(_axis_doc(["s1"]))
+    # written by hand: only the strong side has an id, so the weak side and the space below the sides hold no links
+    check("a group with no ids emits no links", '<div class="side strong"><b>Reliably gets right</b>strong side'
+          '<div class="links"><h4>Related patterns</h4><a href="#s1">name s1</a></div></div>'
+          '<div class="side weak"><b>Reliably misses</b>weak side</div></div></div>' in page, True)
+    check("only the strong side has links", (page.count('<div class="links">'), "<h4>Ways of working</h4>" in page),
+          (1, False))
+
+    for name, doc in (("no patterns key", _axis_doc()), ("empty patterns", _axis_doc([]))):
+        page = _html(doc)
+        # written by hand: both sides hold only their label and text
+        check(name + ": axis without patterns emits no links", '<div class="axis"><h3>axis one</h3><div class="sides">'
+              '<div class="side strong"><b>Reliably gets right</b>strong side</div>'
+              '<div class="side weak"><b>Reliably misses</b>weak side</div></div></div>' in page, True)
+        check(name + ": no links block", '<div class="links">' in page, False)
+
+    # validate rejects an unknown id, so the page is rendered directly
+    doc = _axis_doc(["s1", "nope", "g1"])
+    page = rr.render_html(doc, rr.labels_for(doc))
+    check("an id in no group is dropped",
+          ('<div class="links"><h4>Related patterns</h4><a href="#s1">name s1</a></div>' in page,
+           '<div class="links"><h4>Related patterns</h4><a href="#g1">name g1</a></div>' in page,
+           "nope" in page), (True, True, False))
+    doc = _axis_doc(["nope"])
+    check("only an id in no group emits no links", '<div class="links">' in rr.render_html(doc, rr.labels_for(doc)),
+          False)
+
+    m, e = _markup, _escaped
+    page = _html(_axis_doc(["s1", "g1", "y1"], labels={"related": m("label-related"), "styles": m("label-styles")}))
+    check("overridden related label heads both sides",
+          page.count('<div class="links"><h4>%s</h4>' % e("label-related")), 2)
+    check("overridden styles label heads the ways of working links",
+          '</div><div class="links"><h4>%s</h4><a href="#y1">name y1</a></div></div>' % e("label-styles") in page, True)
+    check("no raw script tag from the link labels", "<script" in page, False)
+
+
+# ----- section and table classes -------------------------------------------------
+
+def test_section_and_table_classes():
+    page = _html(_full_doc())
+    sections = re.findall(r'<section class="([^"]*)">', page)
+    # written by hand: every section the full document renders, in page order
+    check("each section carries its class",
+          sections, ["summary", "strengths", "gaps", "styles", "implications", "scope", "appendix"])
+    for cls, heading in (("summary", "Summary"), ("strengths", "Strengths"), ("gaps", "Gaps"),
+                         ("styles", "Ways of working"), ("implications", "What this means for your work"),
+                         ("scope", "Scope"), ("appendix", "Appendix")):
+        check("%s class on the section of its heading" % cls, '<section class="%s"><h2>%s</h2>' % (cls, heading) in page,
+              True)
+    # written by hand: the three pattern tables, then the implications and the scope tables
+    tables = re.findall(r'<table class="([^"]*)">', page)
+    check("each table carries its class", tables, ["patterns", "patterns", "patterns styles", "implications", "scope"])
+
+    # the class names the group, not its label, so a translated heading keeps its icon and its column widths
+    doc = _full_doc()
+    doc["labels"] = {"strengths": "\u512a\u9ede"}
+    check("class kept under an overridden heading", '<section class="strengths"><h2>\u512a\u9ede</h2>' in _html(doc),
+          True)
+
+    style = page[page.index("<style>"):page.index("</style>")]
+    # an icon or a column width keyed to a class the page never uses would silently apply to nothing
+    for cls in sections:
+        check("icon rule for section.%s" % cls, ('section.%s { --icon:url("data:' % cls) in style, True)
+    for cls in sorted(set(" ".join(tables).split())):
+        check("column rule for table.%s" % cls, ("table.%s " % cls) in style, True)
+
+
 # ----- a cp1252 console ----------------------------------------------------------
 
 def test_non_ascii_on_cp1252_console():
@@ -1177,6 +1477,9 @@ _TESTS = (test_valid_document_renders, test_validation_document, test_validation
           test_validation_diagram_paths, test_validation_diagram_problem_order, test_diagram_html_structure,
           test_diagram_html_arrows, test_diagram_html_placement, test_diagram_css, test_diagram_escaping,
           test_markdown_diagram_list, test_markdown_diagram_escaping, test_markdown_diagram_placement,
+          test_badge_html, test_constraint_and_confidence_text, test_conditional_label_localised,
+          test_evidence_depends_block, test_markdown_conditions_list, test_axis_link_split,
+          test_section_and_table_classes,
           test_non_ascii_on_cp1252_console, test_diagram_on_cp1252_console)
 
 
