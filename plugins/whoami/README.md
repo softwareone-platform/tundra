@@ -20,9 +20,12 @@ The screenshots on this page show a report on two fictional repositories.
 /whoami:whoami ~/source/repos                                   every repository directly under that directory
 /whoami:whoami ~/source/repos/orders                            one repository
 /whoami:whoami ~/source/repos/orders ~/source/repos/accounts    several repositories, separated by spaces
+/whoami:whoami in Traditional Chinese                           this repository, with the report in Traditional Chinese
 ```
 
-It asks you only what the material cannot show, before it reads anything: which repositories and sources to include, and which commit identities are yours. It does not ask when you started using AI. Code a model wrote under your direction still shipped under your name, so it reads all of it, and it finds the date AI shows up in each repository from the history itself. That date lets it tell a pattern of yours from a habit of the tool: a pattern seen before and after it is yours, and one seen only after it counts as yours only when your prompts or instructions show you asked for it.
+The report is written in the language you have been using with Claude, unless you ask for another after the paths. The report is long, so ask for the one you read most easily.
+
+It asks you only what the material cannot show, before it reads anything: which repositories and sources to include, and which commit identities are yours. It does not ask when you started using AI. Code a model wrote under your direction still shipped under your name, so it reads all of it, and it finds the date AI shows up in each repository from the history itself. That date lets it tell a pattern of yours from a habit of the tool: a pattern seen before and after it is yours. Seen only after it, a gap is still yours, because you let it through, but a strength counts as yours only when your prompts or instructions show you asked for it.
 
 It reads the code with several subagents in parallel, so a report over a few dozen commits does not keep you waiting on one reader.
 

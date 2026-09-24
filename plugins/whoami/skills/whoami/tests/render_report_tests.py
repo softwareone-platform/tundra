@@ -94,6 +94,14 @@ def _full_doc():
     }
 
 
+def _all_labels(overrides):
+    """Every label a document may give, English except the overrides, since validate takes every label or none.
+    The title is left out, because it is the one label a document need not give."""
+    labels = {k: v for k, v in rr.LABELS.items() if k != "title"}
+    labels.update(overrides)
+    return labels
+
+
 def _html(doc):
     return rr.render_html(doc, rr.labels_for(doc))
 
@@ -537,14 +545,15 @@ def test_markdown_cells():
                implications=[{"area": "a|rea\nbreak", "meaning": "ask early", "patterns": ["s1"]}])
     lines = _md_lines(doc)
     check("pipe escaped and newline flattened in a pattern row", "| a\\|b two | code | Verified |" in lines, True)
-    # the related column repeats the pattern name, so it is flattened and escaped there too
-    check("pipe escaped and newline flattened in an implication row", "| a\\|rea break | a\\|b two |" in lines, True)
+    # an implication is a list line rather than a table row, so its pipe stays as typed,
+    # while its line break is still flattened to keep the list item on one line
+    check("pipe left raw and newline flattened in an implication line", "- **a|rea break** \u2014 ask early" in lines,
+          True)
     check("no row split onto a second line", [ln for ln in lines if ln.startswith("two") or ln.startswith("break")], [])
 
     doc = _doc(strengths=[_pattern("s1", exceptions=[], name="a\\|b"),
                           _pattern("s2", exceptions=[], confidence={"level": "depends", "on": "C:\\dir"})],
-               implications=[{"area": "reviews", "meaning": "ask early", "patterns": ["s1"]}],
-               labels={"area": "x|\\area", "related": "x|\\related"})
+               implications=[{"area": "C:\\dir|area", "meaning": "ask early", "patterns": ["s1"]}])
     check("fixture: backslash cell document is valid", rr.validate(doc), [])
     lines = _md_lines(doc)
     # the constraint is written in a line under the table, so the cell holds only the short label
@@ -556,11 +565,10 @@ def test_markdown_cells():
     # written by hand: a, three backslashes, pipe, b
     check("backslash doubled before the pipe is escaped in a pattern row",
           "| a\\\\\\|b | code | Verified |" in lines, True)
-    check("backslash doubled before the pipe is escaped in the related column",
-          "| reviews | a\\\\\\|b |" in lines, True)
-    # written by hand: x, backslash, pipe, two backslashes, then the label's own word
-    check("implications header labels escaped as cells",
-          "| x\\|\\\\area | x\\|\\\\related |" in lines, True)
+    # the same characters in prose, where the backslash is doubled and the pipe left as typed.
+    # written by hand: C, colon, two backslashes, dir, pipe, area, in bold, then the meaning
+    check("backslash doubled and pipe left raw in an implication line",
+          "- **C:\\\\dir|area** \u2014 ask early" in lines, True)
 
 
 def test_markdown_tables():
@@ -578,22 +586,25 @@ def test_markdown_tables():
         "| Pattern | Source | Confidence |",
         "|---|---|---|",
         "| name y1 | code | Verified |"]), True)
-    # related patterns are shown by name, since an id means nothing to the reader
-    check("implications table lists pattern names", _has_block(lines, [
-        "## What this means for your work", "", "| Area | Related patterns |", "|---|---|",
-        "| reviews | name s1; name g1 |"]), True)
-    check("implications carry no pattern ids", "| reviews | s1; g1 |" in lines, False)
+    # the meaning is what a reader needs, so each implication is its area and its meaning
+    check("implications listed as area and meaning", _has_block(lines, [
+        "## What this means for your work", "", "- **reviews** \u2014 ask early"]), True)
+    implications = lines[lines.index("## What this means for your work"):lines.index("Full report: `OUT`")]
+    # the related patterns are left to the HTML, so neither a name nor an id reaches these lines
+    check("implications carry no pattern names or ids",
+          [ln for ln in implications if any(s in ln for s in ("name s1", "name g1", "s1", "g1"))], [])
     check("scope line under its label", _has_block(lines, ["## Scope", "", "repo-a over one year"]), True)
-    # written by hand: each lane under its bold title, a numbered step per line with its details in parentheses,
-    # an arrow between steps carrying the note when there is one, a blank line after each lane, then the caption
+    # written by hand: the caption in bold leads, then each lane under its italic title,
+    # a numbered step per line with its details after an em dash, an arrow only where it carries a note,
+    # and a blank line after each lane
     check("diagram listed lane by lane", _has_block(lines, [
-        "**lane one**",
-        "1. step one (detail one; detail two)",
+        "**a flow**", "",
+        "*lane one*",
+        "1. step one \u2014 detail one; detail two",
         "   \u2193 then",
         "2. step two", "",
-        "**lane two**",
-        "1. step three", "",
-        "*a flow*", ""]), True)
+        "*lane two*",
+        "1. step three", ""]), True)
     check("ends with the report path", lines[-1], "Full report: `OUT`")
 
 
@@ -602,7 +613,7 @@ def test_markdown_prose_backslashes():
     # so a heading left without md_text shows up as a single backslash.
     # each value also holds a pipe, which md_cell would escape,
     # so a heading or prose line switched to the table-cell escape shows up too
-    labels = {key: "C:\\dir |" + key for key in ("summary", "strengths", "implications", "scope")}
+    labels = _all_labels({key: "C:\\dir |" + key for key in ("summary", "strengths", "implications", "scope")})
     doc = _doc(summary={"text": "C:\\dir summary| text"}, scope_line="C:\\dir scope| line",
                implications=[{"area": "reviews", "meaning": "ask early", "patterns": ["s1"]}], labels=labels)
     check("fixture: prose backslash document is valid", rr.validate(doc), [])
@@ -627,8 +638,9 @@ def test_markdown_report_path():
 def test_markdown_axis_lines():
     lines = _md_lines(_full_doc())
     # written by hand: the summary paragraphs, then each axis as a bold name and two list lines closed by a blank,
-    # and only then the diagram's first lane, so nothing else sits between the summary and the diagram
-    check("axis block sits between the summary text and the diagram", lines[:lines.index("**lane one**")], [
+    # and only then the diagram's caption, so nothing else sits between the summary and the diagram
+    check("axis block sits between the summary text and the diagram",
+          lines[lines.index("## Summary"):lines.index("**a flow**")], [
         "## Summary", "",
         "first paragraph", "", "second paragraph", "",
         "**axis one**",
@@ -647,7 +659,7 @@ def test_markdown_axis_lines():
     check("two axes each closed by a blank line", _has_block(lines, [
         "**axis one**", "- Reliably gets right \u2014 strong side", "- Reliably misses \u2014 weak side", "",
         "**axis two**", "- Reliably gets right \u2014 strong two", "- Reliably misses \u2014 weak two", "",
-        "**lane one**"]), True)
+        "**a flow**"]), True)
 
     doc = _full_doc()
     doc["labels"] = {"strong": "\u5f37\u9805", "weak": "\u5f31\u9805"}
@@ -660,7 +672,7 @@ def test_markdown_axis_lines():
 def test_markdown_axis_escaping():
     axis = {"name": "C:\\dir axis", "strong": "C:\\dir strong", "weak": "C:\\dir weak", "patterns": ["s1"]}
     doc = _doc(summary={"text": "t", "axes": [axis]},
-               labels={"strong": "C:\\dir good", "weak": "C:\\dir bad"})
+               labels=_all_labels({"strong": "C:\\dir good", "weak": "C:\\dir bad"}))
     check("fixture: backslash axis document is valid", rr.validate(doc), [])
     lines = _md_lines(doc)
     # written by hand: C, colon, two backslashes, then the rest of each value
@@ -714,48 +726,51 @@ def test_markdown_three_column_pattern_tables():
           lines.count("| Pat\\|tern | Sou\\|rce | Con\\|fidence |"), 3)
 
 
-def test_markdown_two_column_implications_table():
+def test_markdown_implications_list():
     lines = _md_lines(_full_doc())
-    # written by hand: a heading, a two-column head, one row per implication, closed by a blank line before the scope
-    check("implications table holds exactly the head and its row", _has_block(lines, [
+    # written by hand: a heading, then each implication as its area in bold and its meaning after an em dash,
+    # closed by a blank line before the report path
+    check("implications list holds exactly its heading and its line", _has_block(lines, [
         "## What this means for your work", "",
-        "| Area | Related patterns |", "|---|---|",
-        "| reviews | name s1; name g1 |", "",
-        "## Scope"]), True)
+        "- **reviews** \u2014 ask early", "",
+        "Full report: `OUT`"]), True)
+    implications = lines[lines.index("## What this means for your work"):]
+    # a list of pattern names wrapped and broke the old table, so the related patterns are left to the HTML
+    check("no pattern name in the implications lines",
+          [ln for ln in implications if "name s1" in ln or "name g1" in ln], [])
     text = "\n".join(lines)
-    check("meaning absent from the Markdown", "ask early" in text, False)
+    check("related patterns and area labels absent from the Markdown",
+          ("Related patterns" in text, "Area" in text), (False, False))
     check("meaning header absent from the Markdown", "What it means" in text, False)
 
 
-def _implication_doc(labels=None, s1_name="name s1"):
-    doc = _doc(strengths=[_pattern("s1", exceptions=[], name=s1_name)], gaps=[_pattern("g1")],
-               implications=[{"area": "reviews", "meaning": "ask early", "patterns": ["s1", "g1"]}])
+def _detail_doc(labels=None, detail=("one", "two")):
+    doc = _step_doc(_step("a", detail=list(detail)))
     if labels is not None:
         doc["labels"] = labels
     return doc
 
 
 def test_markdown_list_separator():
-    check("default list separator joins related names", "| reviews | name s1; name g1 |" in _md_lines(_implication_doc()),
-          True)
-    check("slash list separator joins related names",
-          "| reviews | name s1 / name g1 |" in _md_lines(_implication_doc({"list_separator": " / "})), True)
-    check("ideographic list separator joins related names",
-          "| reviews | name s1\u3001name g1 |" in _md_lines(_implication_doc({"list_separator": "\u3001"})), True)
-    # a comma inside a name would read as two names if the names were joined by a comma
-    check("a name holding a comma stays one name",
-          "| reviews | fast, careful; name g1 |" in _md_lines(_implication_doc(s1_name="fast, careful")), True)
-    # the joined value is one cell, so a pipe in the separator must not open a new column.
-    # written by hand: space, backslash, pipe, space
-    check("pipe in the list separator escaped as a cell",
-          "| reviews | name s1 \\| name g1 |" in _md_lines(_implication_doc({"list_separator": " | "})), True)
+    check("default list separator joins detail items", "1. a \u2014 one; two" in _md_lines(_detail_doc()), True)
+    check("slash list separator joins detail items",
+          "1. a \u2014 one / two" in _md_lines(_detail_doc({"list_separator": " / "})), True)
+    check("ideographic list separator joins detail items",
+          "1. a \u2014 one\u3001two" in _md_lines(_detail_doc({"list_separator": "\u3001"})), True)
+    # a comma inside an item would read as two items if the items were joined by a comma
+    check("a detail item holding a comma stays one item",
+          "1. a \u2014 fast, careful; two" in _md_lines(_detail_doc(detail=("fast, careful", "two"))), True)
+    # the joined details are prose, not a table cell, so a backslash in the separator is doubled and its pipe left as typed.
+    # written by hand: space, two backslashes, pipe, space
+    check("list separator escaped as prose",
+          "1. a \u2014 one \\\\| two" in _md_lines(_detail_doc({"list_separator": " \\| "})), True)
 
-    doc = _implication_doc({"separator": " + "})
+    doc = _detail_doc({"separator": " + "})
     doc["strengths"][0]["sources"] = ["code", "prompts"]
     lines = _md_lines(doc)
     # the sources separator shows up in its own column, so the fixture did override it
     check("sources separator applied to the sources column", "| name s1 | code + prompts | Verified |" in lines, True)
-    check("sources separator leaves the related column alone", "| reviews | name s1; name g1 |" in lines, True)
+    check("sources separator leaves the detail joiner alone", "1. a \u2014 one; two" in lines, True)
 
 
 def test_markdown_report_file_label():
@@ -1066,27 +1081,29 @@ def test_markdown_diagram_list():
         _lane([_step("step one", detail=["detail one", "detail two"], note="then"), _step("step two"),
                _step("step three", note="dropped")], title="lane one"),
         _lane([_step("step four", detail=[]), _step("step five")], title="lane two")])
-    # written by hand: each lane under its bold title, numbered from 1, details in parentheses,
-    # an arrow between steps carrying the note when there is one, a blank line after each lane, then the caption
+    # written by hand: the caption in bold leads, then each lane under its italic title, numbered from 1,
+    # the details after an em dash, an arrow only under a step whose note it carries,
+    # and a blank line after each lane
     check("diagram listed lane by lane", _md_diagram_lines(_diagram_doc(d)), [
-        "**lane one**",
-        "1. step one (detail one; detail two)",
+        "**a flow**",
+        "",
+        "*lane one*",
+        "1. step one \u2014 detail one; detail two",
         "   \u2193 then",
         "2. step two",
-        "   \u2193",
         "3. step three",
         "",
-        "**lane two**",
+        "*lane two*",
         "1. step four",
-        "   \u2193",
         "2. step five",
-        "",
-        "*a flow*",
         ""])
     check("untitled lane has no title line", _md_diagram_lines(_diagram_doc(_diagram([_lane([_step("only")])]))),
-          ["1. only", "", "*a flow*", ""])
+          ["**a flow**", "", "1. only", ""])
     check("empty title has no title line",
-          _md_diagram_lines(_diagram_doc(_diagram([_lane([_step("only")], title="")]))), ["1. only", "", "*a flow*", ""])
+          _md_diagram_lines(_diagram_doc(_diagram([_lane([_step("only")], title="")]))),
+          ["**a flow**", "", "1. only", ""])
+    # the numbering already gives the order, so an arrow with no note to carry would only lengthen the list
+    check("no bare arrow line", [ln for ln in _md_lines(_diagram_doc(d)) if ln.strip() == "\u2193"], [])
     check("last-step note in no line", [ln for ln in _md_lines(_diagram_doc(d)) if "dropped" in ln], [])
     # a code fence is what the old text-drawn diagram needed, and the list form needs none
     check("no code fence anywhere", "```" in "\n".join(_md_lines(_full_doc())), False)
@@ -1098,36 +1115,36 @@ def test_markdown_diagram_escaping():
     check("fixture: backslash diagram document is valid", rr.validate(_diagram_doc(d)), [])
     # written by hand: C, colon, two backslashes, then the rest of each value
     check("backslashes doubled in the diagram lines", _md_diagram_lines(_diagram_doc(d)), [
-        "**C:\\\\dir title**",
-        "1. C:\\\\dir text (C:\\\\dir one; C:\\\\dir two)",
+        "**C:\\\\dir caption**",
+        "",
+        "*C:\\\\dir title*",
+        "1. C:\\\\dir text \u2014 C:\\\\dir one; C:\\\\dir two",
         "   \u2193 C:\\\\dir note",
         "2. last",
-        "",
-        "*C:\\\\dir caption*",
         ""])
 
     d = _diagram([_lane([_step("step\none", detail=["detail\none", "detail\ntwo"], note="then\nnext"),
                          _step("last")], title="lane\none")], caption="a\nflow")
     # written by hand: each line break becomes one space, so a bold span, a list item, or the caption stays on one line
     check("line breaks flattened in the diagram lines", _md_diagram_lines(_diagram_doc(d)), [
-        "**lane one**",
-        "1. step one (detail one; detail two)",
+        "**a flow**",
+        "",
+        "*lane one*",
+        "1. step one \u2014 detail one; detail two",
         "   \u2193 then next",
         "2. last",
-        "",
-        "*a flow*",
         ""])
 
     # these lines are prose, not table cells, so a pipe in them is left as typed
     d = _diagram([_lane([_step("st|ep", detail=["de|tail one", "de|tail two"], note="th|en"), _step("last")],
                         title="la|ne")], caption="a |flow")
     check("pipes left raw in the diagram lines", _md_diagram_lines(_diagram_doc(d)), [
-        "**la|ne**",
-        "1. st|ep (de|tail one; de|tail two)",
+        "**a |flow**",
+        "",
+        "*la|ne*",
+        "1. st|ep \u2014 de|tail one; de|tail two",
         "   \u2193 th|en",
         "2. last",
-        "",
-        "*a |flow*",
         ""])
 
 
@@ -1140,22 +1157,22 @@ def test_markdown_diagram_placement():
               "- Reliably gets right \u2014 strong side",
               "- Reliably misses \u2014 weak side",
               "",
-              "**lane one**",
-              "1. step one (detail one; detail two)",
+              "**a flow**",
+              "",
+              "*lane one*",
+              "1. step one \u2014 detail one; detail two",
               "   \u2193 then",
               "2. step two",
               "",
-              "**lane two**",
+              "*lane two*",
               "1. step three",
-              "",
-              "*a flow*",
               "",
               "## Strengths"])
 
     first = _diagram([_lane([_step("first")])], caption="one")
     second = _diagram([_lane([_step("second")])], caption="two")
     check("several diagrams in document order", _md_diagram_lines(_doc(diagrams=[first, second])),
-          ["1. first", "", "*one*", "", "1. second", "", "*two*", ""])
+          ["**one**", "", "1. first", "", "**two**", "", "1. second", ""])
 
 
 # ----- confidence badges and conditions ------------------------------------------
@@ -1761,8 +1778,8 @@ def test_timeline_tick_edges_and_minor():
 
 def test_timeline_escaping():
     m, e = _markup, _escaped
-    labels = {"timeline_thin": m("thin"), "timeline_close": m("close"), "timeline_ai": m("ai"),
-              "timeline_prompts": m("prompts")}
+    labels = _all_labels({"timeline_thin": m("thin"), "timeline_close": m("close"), "timeline_ai": m("ai"),
+                          "timeline_prompts": m("prompts")})
     doc = _doc(timeline=_timeline(_tl_repo(m("repo"), "2026-01-01", "2026-04-11", ai_from="2026-01-21"),
                                   recent_from="2026-03-02", prompts={"from": "2026-03-22", "to": "2026-04-11"}),
                labels=labels)
@@ -1831,6 +1848,402 @@ def test_timeline_absent_from_markdown():
               [s for s in ("2026-03-02", "2026-01-21", "Read thinly", "Read closely", "AI shows up") if s in text], [])
 
 
+# ----- visible text and the plain-language checks --------------------------------
+
+def _visible_pattern(pid):
+    """A pattern filling every field visible_text reads, each value naming the pattern,
+    and every evidence field holding the word hidden, which visible_text must never yield."""
+    return _pattern(pid, gives="gives " + pid, costs="costs " + pid,
+                    confidence={"level": "depends", "on": "on " + pid},
+                    instances=[{"text": "hidden instance", "ref": "hidden ref"}, "hidden bare instance"],
+                    exceptions=[{"text": "hidden exception", "ref": "hidden exception ref"}],
+                    calibration="hidden calibration", checked="hidden checked")
+
+
+def _visible_doc():
+    """A valid document filling every field visible_text reads, with a different count at each level,
+    so a path built from the wrong counter names the wrong place.
+    Every field visible_text must leave out holds the word hidden."""
+    return {
+        "language": "hidden language",
+        "title": "the title",
+        "scope_line": "the scope line",
+        "labels": _all_labels({"summary": "hidden label"}),
+        "summary": {"text": "the summary",
+                    "axes": [{"name": "axis 0", "description": "axis 0 description",
+                              "strong": "axis 0 strong", "weak": "axis 0 weak", "patterns": ["s1"]},
+                             {"name": "axis 1", "description": "axis 1 description",
+                              "strong": "axis 1 strong", "weak": "axis 1 weak"}]},
+        "diagrams": [{"caption": "caption 0",
+                      "lanes": [{"title": "lane 0.0",
+                                 "steps": [{"text": "step 0.0.0", "note": "note 0.0.0", "tone": "strong",
+                                            "detail": ["detail 0.0.0 a", "detail 0.0.0 b"]},
+                                           {"text": "step 0.0.1"}]}]},
+                     {"caption": "caption 1",
+                      "lanes": [{"title": "lane 1.0", "steps": [{"text": "step 1.0.0"}]},
+                                {"title": "lane 1.1",
+                                 "steps": [{"text": "step 1.1.0", "detail": ["detail 1.1.0"]},
+                                           {"text": "step 1.1.1", "note": "note 1.1.1"}]}]}],
+        "strengths": [_visible_pattern("s1")],
+        "gaps": [_visible_pattern("g1"), _visible_pattern("g2")],
+        "styles": [_visible_pattern("y1")],
+        "implications": [{"area": "area 0", "meaning": "meaning 0", "patterns": ["g1"]},
+                         {"area": "area 1", "meaning": "meaning 1"}],
+        "scope": {"hidden scope key": "hidden scope value", "periods": ["hidden period"]},
+        "dissolved": [{"name": "hidden dissolved", "evidence": "hidden evidence"}],
+        "events": [{"text": "hidden event", "ref": "hidden event ref"}],
+        "timeline": _timeline(_tl_repo("hidden repository", "2026-01-01", "2026-04-11")),
+    }
+
+
+def test_visible_text_walk():
+    doc = _visible_doc()
+    check("fixture: visible text document is valid", rr.validate(doc), [])
+    got = rr.visible_text(doc)
+    # written by hand in walk order: the title and the scope line, the summary and each axis,
+    # each diagram's caption, lane title, and each step's text, note, then details,
+    # then every pattern group, then the implications
+    check("every visible field in walk order", got, [
+        ("document", "the title"), ("document", "the scope line"),
+        ("summary", "the summary"),
+        ("summary.axes[0]", "axis 0"), ("summary.axes[0]", "axis 0 description"),
+        ("summary.axes[0]", "axis 0 strong"), ("summary.axes[0]", "axis 0 weak"),
+        ("summary.axes[1]", "axis 1"), ("summary.axes[1]", "axis 1 description"),
+        ("summary.axes[1]", "axis 1 strong"), ("summary.axes[1]", "axis 1 weak"),
+        ("diagrams[0]", "caption 0"),
+        ("diagrams[0].lanes[0]", "lane 0.0"),
+        ("diagrams[0].lanes[0].steps[0]", "step 0.0.0"), ("diagrams[0].lanes[0].steps[0]", "note 0.0.0"),
+        ("diagrams[0].lanes[0].steps[0]", "detail 0.0.0 a"), ("diagrams[0].lanes[0].steps[0]", "detail 0.0.0 b"),
+        ("diagrams[0].lanes[0].steps[1]", "step 0.0.1"),
+        ("diagrams[1]", "caption 1"),
+        ("diagrams[1].lanes[0]", "lane 1.0"),
+        ("diagrams[1].lanes[0].steps[0]", "step 1.0.0"),
+        ("diagrams[1].lanes[1]", "lane 1.1"),
+        ("diagrams[1].lanes[1].steps[0]", "step 1.1.0"), ("diagrams[1].lanes[1].steps[0]", "detail 1.1.0"),
+        ("diagrams[1].lanes[1].steps[1]", "step 1.1.1"), ("diagrams[1].lanes[1].steps[1]", "note 1.1.1"),
+        ("strengths[0]", "name s1"), ("strengths[0]", "desc s1"), ("strengths[0]", "gives s1"),
+        ("strengths[0]", "costs s1"), ("strengths[0]", "on s1"),
+        ("gaps[0]", "name g1"), ("gaps[0]", "desc g1"), ("gaps[0]", "gives g1"),
+        ("gaps[0]", "costs g1"), ("gaps[0]", "on g1"),
+        ("gaps[1]", "name g2"), ("gaps[1]", "desc g2"), ("gaps[1]", "gives g2"),
+        ("gaps[1]", "costs g2"), ("gaps[1]", "on g2"),
+        ("styles[0]", "name y1"), ("styles[0]", "desc y1"), ("styles[0]", "gives y1"),
+        ("styles[0]", "costs y1"), ("styles[0]", "on y1"),
+        ("implications[0]", "area 0"), ("implications[0]", "meaning 0"),
+        ("implications[1]", "area 1"), ("implications[1]", "meaning 1")])
+    # the evidence, the appendix, the scope, and the timeline are where identifiers belong
+    check("no hidden field yielded", [text for _, text in got if "hidden" in text], [])
+    check("no place outside the visible fields",
+          [where for where, _ in got if where.split("[")[0].split(".")[0] not in (
+              "document", "summary", "diagrams", "strengths", "gaps", "styles", "implications")], [])
+
+
+def test_visible_text_skips():
+    # a value of the wrong type is validate's to name, so visible_text yields only the text
+    doc = {"title": 5, "scope_line": None,
+           "summary": {"text": ["the summary"],
+                       "axes": [{"name": "axis", "description": 7, "strong": None, "weak": "weak"}]},
+           "diagrams": [{"caption": 3,
+                         "lanes": [{"title": {"text": "lane"},
+                                    "steps": [{"text": "step", "note": 4, "detail": ["one", 2, None, "three"]}]}]}],
+           "strengths": [{"name": "name", "description": 8, "gives": ["g"], "costs": None, "confidence": {"on": 9}}],
+           "implications": [{"area": 1, "meaning": "meaning"}]}
+    # written by hand: only the string values, in walk order
+    check("non-string values skipped", rr.visible_text(doc), [
+        ("summary.axes[0]", "axis"), ("summary.axes[0]", "weak"),
+        ("diagrams[0].lanes[0].steps[0]", "step"), ("diagrams[0].lanes[0].steps[0]", "one"),
+        ("diagrams[0].lanes[0].steps[0]", "three"),
+        ("strengths[0]", "name"),
+        ("implications[0]", "meaning")])
+
+    # validate walks the text even when it has already named a bad shape, so a bad shape must not raise here.
+    # written by hand: a bare value is passed over and keeps its index, so the object after it names the next place
+    for name, doc, want in (
+            ("summary not an object", {"title": "t", "summary": "fixed in abc1234"}, [("document", "t")]),
+            ("axis not an object", {"summary": {"text": "t", "axes": ["axis", 5, {"name": "real"}]}},
+             [("summary", "t"), ("summary.axes[2]", "real")]),
+            ("diagram not an object", {"diagrams": ["a flow", {"caption": "real"}]}, [("diagrams[1]", "real")]),
+            ("lane not an object", {"diagrams": [{"caption": "c", "lanes": ["lane", {"title": "real"}]}]},
+             [("diagrams[0]", "c"), ("diagrams[0].lanes[1]", "real")]),
+            ("step not an object", {"diagrams": [{"lanes": [{"steps": ["step", {"text": "real"}]}]}]},
+             [("diagrams[0].lanes[0].steps[1]", "real")]),
+            ("detail not a list",
+             {"diagrams": [{"lanes": [{"steps": [{"text": "s", "note": "n", "detail": "one line"}]}]}]},
+             [("diagrams[0].lanes[0].steps[0]", "s"), ("diagrams[0].lanes[0].steps[0]", "n")]),
+            ("pattern not an object", {"gaps": ["a bare string", {"name": "real"}]}, [("gaps[1]", "real")]),
+            ("confidence not an object", {"styles": [{"name": "real", "confidence": "the load"}]},
+             [("styles[0]", "real")]),
+            ("implication not an object", {"implications": ["reviews", {"area": "real"}]},
+             [("implications[1]", "real")])):
+        check(name + ": walked without raising", rr.visible_text(doc), want)
+
+
+def test_visible_text_bad_containers():
+    # a truthy container that cannot be iterated raised here once, which turned validate's exit 2 into a traceback.
+    # written by hand: the bad container yields nothing, and the walk goes on to the field after it
+    for name, doc, want in (
+            ("diagrams a number", {"title": "t", "diagrams": 5, "gaps": [{"name": "after"}]},
+             [("document", "t"), ("gaps[0]", "after")]),
+            ("gaps a number", {"strengths": [{"name": "before"}], "gaps": 5, "styles": [{"name": "after"}]},
+             [("strengths[0]", "before"), ("styles[0]", "after")]),
+            ("implications a number", {"title": "t", "implications": 5}, [("document", "t")]),
+            ("axes a boolean", {"summary": {"text": "t", "axes": True}, "diagrams": [{"caption": "after"}]},
+             [("summary", "t"), ("diagrams[0]", "after")]),
+            ("lanes a number", {"diagrams": [{"caption": "c", "lanes": 5}, {"caption": "after"}]},
+             [("diagrams[0]", "c"), ("diagrams[1]", "after")]),
+            ("steps a number", {"diagrams": [{"lanes": [{"title": "l", "steps": 5}, {"title": "after"}]}]},
+             [("diagrams[0].lanes[0]", "l"), ("diagrams[0].lanes[1]", "after")]),
+            # a string is truthy, so without the list check it reaches the step's field list and raises there
+            ("detail a string", {"diagrams": [{"lanes": [{"steps": [{"text": "s", "detail": "x"}, {"text": "after"}]}]}]},
+             [("diagrams[0].lanes[0].steps[0]", "s"), ("diagrams[0].lanes[0].steps[1]", "after")])):
+        check(name + ": walked without raising", rr.visible_text(doc), want)
+
+    # end to end, the shape is named once and the run exits 2 rather than raising
+    _invalid("diagrams that is a number", _doc(diagrams=5), "'diagrams' is not a list")
+    _invalid("gaps that is a number", _doc(gaps=5), "'gaps' is not a list")
+    _invalid("implications that is a number", _doc(implications=5), "'implications' is not a list")
+    _invalid("axes that is a boolean", _doc(summary={"text": "t", "axes": True}), "summary: 'axes' is not a list")
+
+
+def test_sha_pattern():
+    # written by hand: forty hex characters holding a digit, the longest a SHA is
+    full = "0123456789abcdef0123456789abcdef01234567"
+    check("fixture: forty characters", len(full), 40)
+    for name, text, want in (
+            ("seven hex characters", "abc1234", "abc1234"),
+            ("forty hex characters", full, full),
+            ("hex letters with one digit", "deadbeef1", "deadbeef1"),
+            # CJK text puts no word boundary before a SHA
+            ("between CJK characters", "\u4fee\u6b63abc1234\u7684", "abc1234"),
+            ("after an underscore", "_abc1234", "abc1234"),
+            ("before a hyphen", "abc1234-5", "abc1234")):
+        found = rr.SHA.search(text)
+        check("SHA matches %s" % name, found.group(0) if found else None, want)
+    for name, text in (
+            ("a word of hex letters", "facade"),
+            ("a year", "2026"),
+            ("seven hex letters with no digit", "deadbee"),
+            ("six characters", "abc123"),
+            ("forty-one characters", full + "8"),
+            ("fifty characters", full + "89abcdef01"),
+            ("uppercase", "ABC1234"),
+            ("a leading capital", "Abc1234"),
+            ("a trailing letter", "abc1234x"),
+            ("a leading letter", "Xabc1234"),
+            ("a hex literal", "0xdeadbeef1"),
+            # a run of digits alone is a date, a count, or an id, so a SHA needs a hex letter too
+            ("a compact date", "20260924"),
+            ("seven digits", "1234567"),
+            ("forty digits", "1234567890" * 4)):
+        check("SHA does not match %s" % name, rr.SHA.search(text), None)
+
+
+def _sha_problem(where, sha):
+    return "%s: '%s' looks like a commit SHA; say what happened, and keep identifiers in an instance's ref" % (where, sha)
+
+
+def test_validation_sha():
+    axis = {"name": "a", "strong": "fixed in abc1234", "weak": "w"}
+    for name, doc, where in (
+            ("an axis side", _doc(summary={"text": "t", "axes": [axis]}), "summary.axes[0]"),
+            ("a diagram step detail", _detail_doc(detail=("one", "see abc1234")), "diagrams[0].lanes[0].steps[0]"),
+            ("a pattern constraint",
+             _doc(gaps=[_pattern("g1", confidence={"level": "depends", "on": "the revert in abc1234"})]), "gaps[0]"),
+            ("an implication meaning", _doc(implications=[{"area": "reviews", "meaning": "as abc1234 shows"}]),
+             "implications[0]")):
+        check("a SHA in %s named with its place" % name, rr.validate(doc), [_sha_problem(where, "abc1234")])
+    _invalid("a SHA in the summary", _doc(summary={"text": "fixed in deadbeef1"}), _sha_problem("summary", "deadbeef1"))
+
+    # one field is one thing to rewrite, so only its first SHA is named
+    check("two SHAs in one field give one problem", rr.validate(_doc(summary={"text": "abc1234 then def5678"})),
+          [_sha_problem("summary", "abc1234")])
+    # the implications are given before the title, so problems in the document's key order would come out reversed
+    check("two fields give two problems in walk order",
+          rr.validate(_doc(implications=[{"area": "reviews", "meaning": "see def5678"}], title="after abc1234")),
+          [_sha_problem("document", "abc1234"), _sha_problem("implications[0]", "def5678")])
+
+    # the evidence, the appendix, and the scope are where identifiers belong, so a SHA there is what the rule asks for
+    for name, doc in (
+            ("an instance text and ref", _doc(strengths=[_pattern("s1", exceptions=[], instances=[
+                {"text": "fixed in abc1234", "ref": "abc1234"}, {"text": "two", "ref": "def5678"}])])),
+            ("an exception",
+             _doc(strengths=[_pattern("s1", exceptions=[{"text": "reverted in abc1234", "ref": "abc1234"}])])),
+            ("calibration and checked", _doc(strengths=[_pattern("s1", exceptions=[],
+                                                                 calibration="3 of 10 since abc1234",
+                                                                 checked="read abc1234")])),
+            ("a scope value", _doc(scope={"repositories": "repo-a at abc1234", "commits": ["abc1234", "def5678"]})),
+            ("an event", _doc(events=[{"text": "reverted abc1234", "ref": "abc1234"}])),
+            ("a dissolved candidate", _doc(dissolved=[{"name": "abc1234", "evidence": "refuted by def5678"}]))):
+        check("a SHA in %s valid" % name, rr.validate(doc), [])
+
+
+def test_validation_labels_completeness():
+    check("every label but the title valid", rr.validate(_doc(labels=_all_labels({}))), [])
+    check("every label and the title valid", rr.validate(_doc(labels=_all_labels({"title": "whoami for repo-a"}))), [])
+
+    _invalid("one label missing", _doc(labels=_without(_all_labels({}), "gaps")),
+             "labels: gaps missing; give every label or none")
+    labels = _all_labels({})
+    # removed out of LABELS order, so a list in removal order would differ
+    for key in ("timeline_ai", "summary", "colon"):
+        del labels[key]
+    check("several labels missing, named in LABELS order", rr.validate(_doc(labels=labels)),
+          ["labels: summary, colon, timeline_ai missing; give every label or none"])
+
+    check("empty labels valid", rr.validate(_doc(labels={})), [])
+    check("null labels valid", rr.validate(_doc(labels=None)), [])
+    # labels_for drops a label that is not text, so it falls back to English as a label left out does
+    for name, value in (("number", 5), ("null", None), ("list", ["Gaps"])):
+        check("a %s label counts as missing" % name, rr.validate(_doc(labels=_all_labels({"gaps": value}))),
+              ["labels: gaps missing; give every label or none"])
+
+    # labels_for reads the labels as an object, so a bare value must be refused before rendering reaches it
+    _invalid("labels that is a list", _doc(labels=["Summary"]), "'labels' is not an object")
+    _invalid("labels that is a string", _doc(labels="Summary"), "'labels' is not an object")
+
+
+def test_validation_sha_and_labels_problem_order():
+    # the fields are given in the reverse of the order they are reported in
+    doc = _without(_doc(labels=_without(_all_labels({}), "gaps"),
+                        implications=[{"area": "reviews", "meaning": "see def5678"}],
+                        summary={"text": "fixed in abc1234"},
+                        timeline=_timeline("repo-a")), "scope")
+    # written by hand in the order validate reports: the timeline, then each SHA in walk order,
+    # then the labels, then the scope
+    _invalid_all("SHA and labels problems between the timeline and the scope", doc, [
+        "timeline.repositories[0]: a repository must be an object",
+        _sha_problem("summary", "abc1234"),
+        _sha_problem("implications[0]", "def5678"),
+        "labels: gaps missing; give every label or none",
+        "document: 'scope' is missing or empty"])
+
+
+def test_colon_label():
+    check("English colon label", rr.LABELS["colon"], ": ")
+    m, e = _markup, _escaped
+    wide = rr.labels_for({"labels": {"colon": "\uff1a"}})
+    # written by hand: the depends label, the full-width colon with no space after it, then the constraint
+    check("colon joins the constraint", rr.constraint_text(_LOAD, wide), "Depends on\uff1athe load")
+    check("colon reaches the badge title and tip", rr.badge_html(_LOAD, wide),
+          '<span class="badge depends" tabindex="0" title="Depends on\uff1athe load"'
+          ' data-tip="Depends on\uff1athe load">Conditional</span>')
+    tip = "Depends on%sthe load" % e("colon")
+    check("markup in the colon escaped in the badge",
+          rr.badge_html(_LOAD, rr.labels_for({"labels": {"colon": m("colon")}})),
+          '<span class="badge depends" tabindex="0" title="%s" data-tip="%s">Conditional</span>' % (tip, tip))
+
+    doc = _full_doc()
+    doc["labels"] = _all_labels({"colon": "\uff1a"})
+    check("fixture: full-width colon document is valid", rr.validate(doc), [])
+    check("colon reaches the badge on the page",
+          'title="Depends on\uff1athe load" data-tip="Depends on\uff1athe load"' in _section(_html(doc), "Gaps"), True)
+    lines = _md_lines(doc)
+    check("colon reaches the Markdown condition line", "- name g1 \u2014 Depends on\uff1athe load" in lines, True)
+    check("colon reaches the report path line", lines[-1], "Full report\uff1a`OUT`")
+
+    # written by hand from _tl_full: the AI marker on day 20, titled with the label, the colon, then the date
+    check("colon reaches the AI marker title",
+          '<span class="tl-ai" style="left:20.00%" title="AI shows up\uff1a2026-01-21"></span>'
+          in _tl_html(_tl_full(), {"colon": "\uff1a"}), True)
+    check("markup in the colon escaped in the AI marker title",
+          '<span class="tl-ai" style="left:20.00%" title="AI shows up' + e("colon") + '2026-01-21"></span>'
+          in _tl_html(_tl_full(), {"colon": m("colon")}), True)
+
+    # the colon is prose ahead of the code span, so its backslash is doubled while the path stays as passed.
+    # written by hand: two backslashes, a colon, and a space, then the path with single backslashes
+    doc = _doc(labels=_all_labels({"colon": "\\: "}))
+    check("backslash in the colon doubled in the report path line",
+          rr.render_markdown(doc, rr.labels_for(doc), "C:\\out\\report.html").splitlines()[-1],
+          "Full report\\\\: `C:\\out\\report.html`")
+
+    # written by hand: the English output as the default colon writes it
+    check("default colon in the English output",
+          (rr.constraint_text(_LOAD, rr.LABELS), _md_lines(_full_doc())[-1],
+           'title="AI shows up: 2026-01-21"' in _tl_html(_tl_full())),
+          ("Depends on: the load", "Full report: `OUT`", True))
+    # the default spelled out in the labels renders exactly what no labels render
+    explicit = dict(_full_doc(), labels=_all_labels({}))
+    check("default colon leaves the Markdown unchanged", _md_lines(explicit), _md_lines(_full_doc()))
+    check("default colon leaves the page unchanged", _html(explicit), _html(_full_doc()))
+
+
+def test_markdown_section_order():
+    # written by hand: the scope and its line lead, then the summary, the strength table, and the report path
+    check("scope section leads the Markdown", _md_lines(_doc(scope_line="repo-a over one year")), [
+        "## Scope", "", "repo-a over one year", "",
+        "## Summary", "", "the summary", "",
+        "## Strengths", "",
+        "| Pattern | Source | Confidence |",
+        "|---|---|---|",
+        "| name s1 | code | Verified |", "",
+        "Full report: `OUT`"])
+    for name, doc in (("no scope line", _doc()), ("empty scope line", _doc(scope_line=""))):
+        lines = _md_lines(doc)
+        check(name + ": no scope section, and the summary leads", (lines[0], "## Scope" in lines), ("## Summary", False))
+
+    lines = _md_lines(_full_doc())
+    # written by hand: every heading the full document prints, in order
+    check("headings in order, the scope first", [ln for ln in lines if ln.startswith("## ")], [
+        "## Scope", "## Summary", "## Strengths", "## Gaps", "## Ways of working", "## What this means for your work"])
+    check("scope line printed once", lines.count("repo-a over one year"), 1)
+    # the page puts its scope table after the implications, and the Markdown must not follow it there
+    check("implications followed directly by the report path",
+          lines[lines.index("## What this means for your work"):], [
+              "## What this means for your work", "",
+              "- **reviews** \u2014 ask early", "",
+              "Full report: `OUT`"])
+
+
+def test_diagram_markdown_direct():
+    # a lab built by hand rather than by labels_for, so the joiner can only come from the lab passed in
+    lab = dict(rr.LABELS, list_separator=" + ")
+    d = {"caption": "the flow",
+         "lanes": [{"title": "first lane", "steps": [{"text": "a", "detail": ["x", "y"], "note": "then"},
+                                                     {"text": "b", "note": ""},
+                                                     {"text": "c", "note": "dropped"}]},
+                   {"title": "second lane", "steps": [{"text": "d"}, {"text": "e", "detail": ["z"]}]}]}
+    got = rr.diagram_markdown(d, lab)
+    # written by hand: the caption in bold and a blank line, then each lane under its italic title,
+    # the details after an em dash joined by the lab's separator,
+    # an arrow only under a step with a note and a step after it, and a blank line closing each lane
+    check("diagram lines from a custom lab", got, [
+        "**the flow**", "",
+        "*first lane*",
+        "1. a \u2014 x + y",
+        "   \u2193 then",
+        "2. b",
+        "3. c",
+        "",
+        "*second lane*",
+        "1. d",
+        "2. e \u2014 z",
+        ""])
+    check("the caption leads and does not follow the lanes", [i for i, ln in enumerate(got) if "the flow" in ln], [0])
+    for name, caption in (("no caption", {}), ("empty caption", {"caption": ""})):
+        check(name + " renders no caption lines",
+              rr.diagram_markdown(dict(caption, lanes=[{"steps": [{"text": "a"}]}]), lab), ["1. a", ""])
+
+
+def test_markdown_implications_lines():
+    doc = _doc(implications=[{"area": "zeta", "meaning": "the last letter", "patterns": ["s1"]},
+                             {"area": "two\nlines", "meaning": "ask\nearly"},
+                             {"area": "C:\\a|b", "meaning": "D:\\c|d", "patterns": ["s1"]}])
+    check("fixture: implications document is valid", rr.validate(doc), [])
+    lines = _md_lines(doc)
+    section = lines[lines.index("## What this means for your work"):lines.index("Full report: `OUT`")]
+    # written by hand: one line per implication in document order, not sorted, each line break a space,
+    # each backslash doubled, and each pipe left as typed, since a list line is not a table cell
+    check("one line per implication in document order", section, [
+        "## What this means for your work", "",
+        "- **zeta** \u2014 the last letter",
+        "- **two lines** \u2014 ask early",
+        "- **C:\\\\a|b** \u2014 D:\\\\c|d",
+        ""])
+    # the related patterns are left to the HTML, and a list needs no table head
+    check("no pattern name or id in the implications lines", [ln for ln in section if "s1" in ln], [])
+    check("no table line in the implications lines", [ln for ln in section if ln.startswith("|")], [])
+
+
 # ----- a cp1252 console ----------------------------------------------------------
 
 def test_non_ascii_on_cp1252_console():
@@ -1878,7 +2291,7 @@ _TESTS = (test_valid_document_renders, test_validation_document, test_validation
           test_labels_in_html, test_separator_joins_sources, test_markdown_cells, test_markdown_tables,
           test_markdown_prose_backslashes, test_markdown_report_path, test_markdown_axis_lines,
           test_markdown_axis_escaping, test_markdown_three_column_pattern_tables,
-          test_markdown_two_column_implications_table, test_markdown_list_separator, test_markdown_report_file_label,
+          test_markdown_implications_list, test_markdown_list_separator, test_markdown_report_file_label,
           test_validation_diagram_shape, test_validation_diagram_lanes, test_validation_diagram_steps,
           test_validation_diagram_paths, test_validation_diagram_problem_order, test_diagram_html_structure,
           test_diagram_html_arrows, test_diagram_html_placement, test_diagram_css, test_diagram_escaping,
@@ -1891,6 +2304,10 @@ _TESTS = (test_valid_document_renders, test_validation_document, test_validation
           test_timeline_prompts_row, test_timeline_legend, test_timeline_tick_steps, test_timeline_tick_edges_and_minor,
           test_timeline_escaping, test_timeline_placement, test_timeline_labels_localised,
           test_timeline_absent_from_markdown,
+          test_visible_text_walk, test_visible_text_skips, test_visible_text_bad_containers,
+          test_sha_pattern, test_validation_sha,
+          test_validation_labels_completeness, test_validation_sha_and_labels_problem_order, test_colon_label,
+          test_markdown_section_order, test_diagram_markdown_direct, test_markdown_implications_lines,
           test_non_ascii_on_cp1252_console, test_diagram_on_cp1252_console)
 
 

@@ -16,6 +16,9 @@ import sys
 
 INVALID = 2
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# seven to forty hex characters holding both a digit and a letter, so words such as "facade" and numbers such as
+# "2026" do not match, bounded by lookarounds because CJK text puts no word boundary before a SHA
+SHA = re.compile(r"(?<![0-9A-Za-z])(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9A-Za-z])")
 
 SOURCES = ("code", "prompts", "instructions")
 LEVELS = ("verified", "depends")
@@ -56,6 +59,7 @@ LABELS = {
     "instructions": "instructions",
     "separator": ", ",
     "list_separator": "; ",
+    "colon": ": ",
     "conditional": "Conditional",
     "timeline_thin": "Read thinly",
     "timeline_close": "Read closely",
@@ -177,8 +181,63 @@ def validate(doc):
     if doc.get("timeline") is not None:
         problems += validate_timeline(doc["timeline"])
 
+    # the plain-language rule was broken in two trial runs, so the one identifier that can be told
+    # from ordinary words is checked rather than asked for
+    for where, text in visible_text(doc):
+        found = SHA.search(text)
+        if found:
+            problems.append("%s: '%s' looks like a commit SHA; say what happened, and keep identifiers in an instance's ref"
+                            % (where, found.group(0)))
+
+    labels = doc.get("labels")
+    if labels is not None and not isinstance(labels, dict):
+        problems.append("'labels' is not an object")
+    elif labels:
+        missing = [key for key in LABELS if key != "title" and not isinstance(labels.get(key), str)]
+        # a label left out falls back to English, which in a report written in another language reads as a slip
+        if missing:
+            problems.append("labels: %s missing; give every label or none" % ", ".join(missing))
+
     need(doc, "scope", "document", dict)
     return problems
+
+
+def visible_text(doc):
+    """Every field a reader sees before expanding anything, as (where, text).
+    The evidence, the appendix, and the scope table are left out, since they are where identifiers belong."""
+    # validate reports a container of the wrong shape on its own, so the walk skips it rather than raise
+    listed = lambda value: value if isinstance(value, list) else []
+    fields = [("document", doc.get(key)) for key in ("title", "scope_line")]
+    summary = doc.get("summary") if isinstance(doc.get("summary"), dict) else {}
+    fields.append(("summary", summary.get("text")))
+    for i, axis in enumerate(listed(summary.get("axes"))):
+        if isinstance(axis, dict):
+            fields += [("summary.axes[%d]" % i, axis.get(k)) for k in ("name", "description", "strong", "weak")]
+    for i, d in enumerate(listed(doc.get("diagrams"))):
+        if not isinstance(d, dict):
+            continue
+        fields.append(("diagrams[%d]" % i, d.get("caption")))
+        for j, lane in enumerate(listed(d.get("lanes"))):
+            if not isinstance(lane, dict):
+                continue
+            where = "diagrams[%d].lanes[%d]" % (i, j)
+            fields.append((where, lane.get("title")))
+            for k, step in enumerate(listed(lane.get("steps"))):
+                if isinstance(step, dict):
+                    step_where = "%s.steps[%d]" % (where, k)
+                    detail = listed(step.get("detail"))
+                    fields += [(step_where, x) for x in [step.get("text"), step.get("note")] + detail]
+    for group in ("strengths", "gaps", "styles"):
+        for i, p in enumerate(listed(doc.get(group))):
+            if isinstance(p, dict):
+                where = "%s[%d]" % (group, i)
+                confidence = p.get("confidence") if isinstance(p.get("confidence"), dict) else {}
+                fields += [(where, p.get(k)) for k in ("name", "description", "gives", "costs")]
+                fields.append((where, confidence.get("on")))
+    for i, row in enumerate(listed(doc.get("implications"))):
+        if isinstance(row, dict):
+            fields += [("implications[%d]" % i, row.get(k)) for k in ("area", "meaning")]
+    return [(where, text) for where, text in fields if isinstance(text, str)]
 
 
 def validate_timeline(timeline):
@@ -250,7 +309,7 @@ def confidence_text(confidence, lab):
 
 
 def constraint_text(confidence, lab):
-    return "%s: %s" % (lab["depends"], confidence["on"]) if confidence["level"] == "depends" else ""
+    return "%s%s%s" % (lab["depends"], lab["colon"], confidence["on"]) if confidence["level"] == "depends" else ""
 
 
 def sources_text(sources, lab):
@@ -525,8 +584,8 @@ def timeline_html(timeline, lab):
             parts.append(segment("close", max(start, recent) if recent else start, end))
             kinds.add("close")
         if r.get("ai_from"):
-            parts.append('<span class="tl-ai" style="left:%.2f%%" title="%s: %s"></span>' % (
-                pos(day(r["ai_from"])), esc(lab["timeline_ai"]), esc(r["ai_from"])))
+            parts.append('<span class="tl-ai" style="left:%.2f%%" title="%s%s%s"></span>' % (
+                pos(day(r["ai_from"])), esc(lab["timeline_ai"]), esc(lab["colon"]), esc(r["ai_from"])))
             kinds.add("ai")
         rows.append(row(r["name"], "".join(parts)))
     if prompts:
@@ -582,22 +641,22 @@ def diagram_html(d):
     return '<figure class="flow">%s<div class="lanes n%d">%s</div></figure>' % (caption, len(lanes), "".join(lanes))
 
 
-def diagram_markdown(d):
+def diagram_markdown(d, lab):
     # a terminal cannot draw a box whose border lines up across CJK text, so the summary lists the steps instead
-    lines = []
+    one = lambda text: md_text(text).replace("\n", " ")
+    # the caption leads, as in the HTML, so a reader knows what the lists are before reading them
+    lines = ["**%s**" % one(d["caption"]), ""] if d.get("caption") else []
     for lane in d.get("lanes", []):
         if lane.get("title"):
-            lines.append("**%s**" % md_text(lane["title"]).replace("\n", " "))
+            lines.append("*%s*" % one(lane["title"]))
         steps = lane.get("steps", [])
         for i, step in enumerate(steps):
-            text = md_text(step.get("text", "")).replace("\n", " ")
-            detail = "; ".join(md_text(x).replace("\n", " ") for x in step.get("detail", []))
-            lines.append("%d. %s%s" % (i + 1, text, " (%s)" % detail if detail else ""))
-            if i < len(steps) - 1:
-                lines.append("   \u2193 %s" % md_text(step["note"]).replace("\n", " ") if step.get("note") else "   \u2193")
+            detail = one(lab["list_separator"]).join(one(x) for x in step.get("detail", []))
+            lines.append("%d. %s%s" % (i + 1, one(step.get("text", "")), " \u2014 %s" % detail if detail else ""))
+            # the numbering already gives the order, so an arrow is drawn only where it carries a note
+            if i < len(steps) - 1 and step.get("note"):
+                lines.append("   \u2193 %s" % one(step["note"]))
         lines.append("")
-    if d.get("caption"):
-        lines += ["*%s*" % md_text(d["caption"]).replace("\n", " "), ""]
     return lines
 
 
@@ -613,11 +672,14 @@ def md_text(text):
 
 
 def render_markdown(doc, lab, out_path):
-    names = names_by_id(doc)
     summary = doc["summary"]
-    lines = ["## %s" % md_text(lab["summary"]), "", md_text(summary["text"]), ""]
+    lines = []
+    # the scope leads, as the timeline does in the HTML, because the conclusion rests on that material and no more
+    if doc.get("scope_line"):
+        lines += ["## %s" % md_text(lab["scope"]), "", md_text(doc["scope_line"]), ""]
+    lines += ["## %s" % md_text(lab["summary"]), "", md_text(summary["text"]), ""]
     # a terminal table misaligns once a long cell wraps, so the summary keeps long text out of tables
-    # and leaves descriptions, trade-offs, and meanings to the HTML
+    # and leaves descriptions and trade-offs to the HTML
     for a in summary.get("axes", []):
         # a line break would end the bold span or the list item early, so each axis value stays on one line
         one = lambda text: md_text(text).replace("\n", " ")
@@ -625,7 +687,7 @@ def render_markdown(doc, lab, out_path):
                   "- %s — %s" % (one(lab["strong"]), one(a["strong"])),
                   "- %s — %s" % (one(lab["weak"]), one(a["weak"])), ""]
     for d in doc.get("diagrams", []):
-        lines += diagram_markdown(d)
+        lines += diagram_markdown(d, lab)
     for group in ("strengths", "gaps", "styles"):
         if not doc.get(group):
             continue
@@ -641,17 +703,14 @@ def render_markdown(doc, lab, out_path):
         if conditions:
             lines += conditions + [""]
     if doc.get("implications"):
-        lines += ["## %s" % md_text(lab["implications"]), "",
-                  "| %s | %s |" % (md_cell(lab["area"]), md_cell(lab["related"])), "|---|---|"]
-        # pattern names often hold a comma, so the names are joined by a separator of their own
-        lines += ["| %s | %s |" % (md_cell(r["area"]),
-                                  md_cell(lab["list_separator"].join(names[x] for x in r.get("patterns", []) if x in names)))
+        # the meaning is the implication itself, and a list item wraps where a table cell would break the table,
+        # so the summary gives each meaning and leaves the related patterns to the HTML
+        lines += ["## %s" % md_text(lab["implications"]), ""]
+        lines += ["- **%s** — %s" % (md_text(r["area"]).replace("\n", " "), md_text(r["meaning"]).replace("\n", " "))
                   for r in doc["implications"]]
         lines.append("")
-    if doc.get("scope_line"):
-        lines += ["## %s" % md_text(lab["scope"]), "", md_text(doc["scope_line"]), ""]
     # a code span keeps a Windows path whole, where plain Markdown reads "\." as an escaped dot
-    lines.append("%s: `%s`" % (md_text(lab["report_file"]), out_path))
+    lines.append("%s%s`%s`" % (md_text(lab["report_file"]), md_text(lab["colon"]), out_path))
     return "\n".join(lines) + "\n"
 
 

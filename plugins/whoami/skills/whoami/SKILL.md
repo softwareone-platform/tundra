@@ -1,7 +1,7 @@
 ---
 name: whoami
 description: A self-assessment from the code shipped under your name, the prompts you gave Claude, and the instructions you left it. It tests each pattern against what could explain it away, and reports what it concludes about how you work.
-argument-hint: "[repository or directory ...]"
+argument-hint: "[repository or directory ...] [in <language>]"
 disable-model-invocation: true
 ---
 
@@ -21,7 +21,7 @@ The report is a conclusion backed by evidence, rendered as an HTML file with a M
 
 Arguments: $ARGUMENTS
 
-Each argument is a repository, or a directory whose immediate subdirectories are repositories. With no argument, the scope is the repository this session is in.
+Each argument is a repository, or a directory whose immediate subdirectories are repositories. With no path among the arguments, the scope is the repository this session is in. Words that are not a path, such as "in Traditional Chinese", ask for the language the report is written in. Tell a path from such words by whether it exists, since a directory can have any name. With no language asked for, the report is in the language the person has been using with you.
 
 Read code **through git** only: `git log`, `git show <sha>`, `git show <sha>:<path>`, `git grep <pattern> <sha>`, `git blame <sha> -- <path>`. Leave the working tree alone, so untracked and ignored files (local settings, secrets, unfinished work) stay out of the analysis whatever the scope directory holds. In Git Bash on Windows, set `MSYS_NO_PATHCONV=1` for any command that takes `<rev>:<path>`, because the shell otherwise rewrites the argument into a Windows path.
 
@@ -77,7 +77,7 @@ Done when you hold the changes to read, one line per group you left out saying w
 
 **In code**, read each change's diff, then enough of the code at that commit to see the **other end of each seam** it touches: the callers of what it changed, the consumers of a type it altered, the configuration it relies on.
 
-**Read the code in parallel** so the person does not wait on one reader. Split the changes into batches of about a dozen and spawn one fresh subagent per batch, all in the same message. Use fresh subagents, not forks: a fork carries this whole session's context into every call it makes, and in one trial four forks read over five times the tokens the session itself did. Give each subagent everything it needs in its prompt, since it sees nothing else:
+**Read the code in parallel** so the person does not wait on one reader. Split the changes into batches by size, about 3,000 changed lines and at most a dozen changes to a batch, counting lines with `git show --shortstat` and leaving out generated files. A reader's context grows with what it reads, not with how many commits it is given: in one trial, 14 changes holding 12,000 changed lines went to four readers, and each still reached about 200,000 tokens. Spawn one fresh subagent per batch, all in the same message. Use fresh subagents, not forks: a fork carries this whole session's context into every call it makes, and in one trial four forks read over five times the tokens the session itself did. Give each subagent everything it needs in its prompt, since it sees nothing else:
 
 - the repository path, its batch of commit SHAs, and the confirmed author emails;
 - that it reads through git only, never the working tree, and sets `MSYS_NO_PATHCONV=1` in Git Bash;
@@ -112,7 +112,7 @@ For each pattern, name the **constraint** that would make it something other tha
 - a pipeline shows what CI enforces, such as a coverage gate or an analyser;
 - the code at that commit shows whether a caller guarantees the input, or whether a later process repairs what a script leaves behind;
 - the instructions show whether a prompt's apparent omission is already a standing rule, and a rule dated before a correction shows the model broke it rather than the person leaving it out;
-- **the tool's default** is the constraint for a code pattern that could be how a model or a pipeline writes rather than how the person works. Instances on both sides of the date AI shows up make the pattern the person's. Instances only after it need the prompts or instructions to show the person asked for it or let it stand; without that, the pattern is conditional on not being the tool's default.
+- **the tool's default** is the constraint for a code pattern that could be how a model or a pipeline writes rather than how the person works. Instances on both sides of the date AI shows up make the pattern the person's. When every instance comes after it, a gap and a strength part ways. A gap is still the person's, because they let it through. A strength or a style is not theirs merely because they let it through, since leaving well-made code alone is not the skill: it needs the prompts or instructions to show they asked for it, and without that it is conditional on not being how the model writes by default. Record this check in the pattern's `checked` for every pattern whose instances all come after the date.
 
 Each pattern ends in one of four states:
 
@@ -135,7 +135,7 @@ Done when each axis cites the patterns behind it, or the report says the pattern
 
 ## 7. Report
 
-Write the report as one JSON document in the language the person has been using, following [`report-schema.md`](report-schema.md). Read the schema before you write the document. The reader is the person, not a reviewer of the analysis, so every field they see is in plain language: what happened, what it means, and why it matters. Identifiers such as commit SHAs, file paths, line numbers, and class names go only in an instance's `ref`, which the HTML keeps inside the collapsed evidence.
+Write the report as one JSON document in the language from step 1, with its `language` code and every label in that language, following [`report-schema.md`](report-schema.md). Read the schema before you write the document. The reader is the person, not a reviewer of the analysis, so every field they see is in plain language: what happened, what it means, and why it matters. Identifiers such as commit SHAs, file paths, line numbers, and class names go only in an instance's `ref`, which the HTML keeps inside the collapsed evidence.
 
 - **Summary**: several sentences a reader can take in without the tables, then the axes, each with a description of what it is about.
 - **Diagrams**: add one wherever a shape explains better than a sentence, such as how a kind of defect gets found or missed, or how the axes relate. Give it as structure, steps in lanes as the schema describes, never as text drawn into boxes. One idea per diagram, and a comparison as lanes side by side in one diagram.
