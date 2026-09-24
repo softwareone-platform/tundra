@@ -14,7 +14,7 @@ A self-assessment built from what you produced: the code that shipped under your
 /whoami:whoami ~/source/repos/orders    one repository
 ```
 
-It asks you only what the material cannot show, before it reads anything: which repositories and sources to include, what each repository is, and which commit identities are yours. It does not ask when you started using AI. Code a model wrote under your direction still shipped under your name, so it reads all of it, and it finds the date AI shows up in each repository from the history itself. That date lets it tell a pattern of yours from a habit of the tool: a pattern seen before and after it is yours, and one seen only after it counts as yours only when your prompts or instructions show you asked for it.
+It asks you only what the material cannot show, before it reads anything: which repositories and sources to include, and which commit identities are yours. It does not ask when you started using AI. Code a model wrote under your direction still shipped under your name, so it reads all of it, and it finds the date AI shows up in each repository from the history itself. That date lets it tell a pattern of yours from a habit of the tool: a pattern seen before and after it is yours, and one seen only after it counts as yours only when your prompts or instructions show you asked for it.
 
 It reads the code with several subagents in parallel, so a report over a few dozen commits does not keep you waiting on one reader.
 

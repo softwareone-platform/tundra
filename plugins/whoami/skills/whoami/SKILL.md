@@ -31,11 +31,11 @@ Confirm the repositories and the sources in one AskUserQuestion call. Say plainl
 - **prompts**: only the text they typed, with pasted content replaced by its size, from the transcripts on this machine. Those prompts reached the model once already, when they were typed. The transcripts go back only as far as Claude Code's retention setting keeps them;
 - **instructions**: the `CLAUDE.md` in each repository, read through git, and their own user-level `~/.claude/CLAUDE.md` and `~/.claude/rules/`, which live outside git.
 
-In the same call, ask what each repository is, because the history cannot show it: production code, an experiment or proof of concept, or a clone kept for reading. Drop a clone kept for reading. Leave an experiment in, and judge its patterns against what an experiment needs.
+Tell what each repository is from the material rather than asking: an experiment or proof of concept usually says so in its name, its README, or its commit messages, and judge its patterns against what an experiment needs. A clone kept only for reading holds none of the person's commits, so it drops out at step 3 without being singled out.
 
 Do not ask who typed the code or when an AI tool started taking part. Nobody remembers that date, and it does not decide what the code says about the person: code a model wrote under their direction shipped under their name, shaped by what they asked for and what they let through.
 
-Done when the person has confirmed the repositories and sources, and each repository has a kind.
+Done when the person has confirmed the repositories and sources.
 
 ## 2. Identity
 
