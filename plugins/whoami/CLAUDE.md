@@ -79,7 +79,7 @@ Its checks are in `skills/whoami/tests/render_report_tests.py`. Run them with `p
 
 This is a measuring tool, so it gets checked harder than what it measures. Before a claim about what it finds goes into its README, run it on developers from populations the trial did not cover: a team repository and a solo one, and greenfield and maintenance work. One developer's run proves only that developer's case.
 
-The experiment's kill criterion is in the README's Status section. The skill does not ask for the signal, because a question after the report makes the report look unfinished. Ask the people who try it, outside the run, whether its conclusions told them anything they did not already know.
+The plugin is an experiment, with one kill criterion: if the people who try it find that its conclusions tell them nothing they did not already know, it is withdrawn. The criterion lives here rather than in the README, because it is a decision for whoever maintains the plugin, not something a user acts on. The skill does not ask for the signal, because a question after the report makes the report look unfinished. Ask the people who try it, outside the run, whether its conclusions told them anything they did not already know.
 
 ## Conventions
 

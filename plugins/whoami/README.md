@@ -55,7 +55,3 @@ The report opens with a timeline of what it read: the span of each repository's 
 ## Requirements
 
 [Python](https://www.python.org/downloads/) on `PATH`, for reading prompts and rendering the report. It uses the standard library only and is tested on 3.13.
-
-## Status
-
-This is an experiment. If the people who try it find that its conclusions tell them nothing they did not already know, this plugin will be withdrawn.
