@@ -2244,6 +2244,144 @@ def test_markdown_implications_lines():
     check("no table line in the implications lines", [ln for ln in section if ln.startswith("|")], [])
 
 
+# ----- colour scheme switch ------------------------------------------------------
+
+# written by hand from the switch's format: the three radios in the order auto, light, dark, with only auto checked
+_SWITCH = ('<div class="theme" role="radiogroup" aria-label="Colour scheme">'
+           '<input type="radio" name="theme" id="theme-auto" checked><label for="theme-auto">Auto</label>'
+           '<input type="radio" name="theme" id="theme-light"><label for="theme-light">Light</label>'
+           '<input type="radio" name="theme" id="theme-dark"><label for="theme-dark">Dark</label>'
+           '</div>')
+
+_THEME_KEYS = ("theme", "theme_auto", "theme_light", "theme_dark")
+
+# written by hand: every custom property the page reads, in the order each theme declares them
+_TOKENS = ["--paper", "--sheet", "--ink", "--muted", "--rule", "--right", "--right-wash", "--miss", "--miss-wash",
+           "--focus", "--tip", "--tip-ink", "--tl-bar", "--tl-prompt"]
+
+
+def _style(page):
+    return page[page.index("<style>") + len("<style>"):page.index("</style>")]
+
+
+def test_theme_labels():
+    check("English theme labels", {k: rr.LABELS[k] for k in _THEME_KEYS},
+          {"theme": "Colour scheme", "theme_auto": "Auto", "theme_light": "Light", "theme_dark": "Dark"})
+    check("every label with the theme labels valid", rr.validate(_doc(labels=_all_labels({}))), [])
+    _invalid("theme label missing", _doc(labels=_without(_all_labels({}), "theme_dark")),
+             "labels: theme_dark missing; give every label or none")
+    labels = _all_labels({})
+    # removed out of LABELS order, so a list in removal order would differ
+    for key in ("theme_dark", "theme", "theme_light", "theme_auto"):
+        del labels[key]
+    check("all four theme labels missing, named in LABELS order", rr.validate(_doc(labels=labels)),
+          ["labels: theme, theme_auto, theme_light, theme_dark missing; give every label or none"])
+
+
+def test_theme_switch():
+    check("English switch", rr.theme_switch(rr.LABELS), _SWITCH)
+    check("only auto checked", rr.theme_switch(rr.LABELS).count(" checked"), 1)
+
+    m, e = _markup, _escaped
+    lab = rr.labels_for({"labels": {k: m("label-" + k) for k in _THEME_KEYS}})
+    # written by hand: each label escaped where it sits, the group's name inside aria-label="..."
+    check("every theme label escaped", rr.theme_switch(lab),
+          '<div class="theme" role="radiogroup" aria-label="%s">'
+          '<input type="radio" name="theme" id="theme-auto" checked><label for="theme-auto">%s</label>'
+          '<input type="radio" name="theme" id="theme-light"><label for="theme-light">%s</label>'
+          '<input type="radio" name="theme" id="theme-dark"><label for="theme-dark">%s</label>'
+          '</div>' % (e("label-theme"), e("label-theme_auto"), e("label-theme_light"), e("label-theme_dark")))
+
+    labels = {"theme": "\u914d\u8272", "theme_auto": "\u81ea\u52d5", "theme_light": "\u6dfa\u8272",
+              "theme_dark": "\u6df1\u8272"}
+    doc = _full_doc()
+    doc["labels"] = _all_labels(labels)
+    check("fixture: localised theme labels document is valid", rr.validate(doc), [])
+    page = _html(doc)
+    check("localised switch on the page",
+          '<div class="theme" role="radiogroup" aria-label="\u914d\u8272">'
+          '<input type="radio" name="theme" id="theme-auto" checked><label for="theme-auto">\u81ea\u52d5</label>'
+          '<input type="radio" name="theme" id="theme-light"><label for="theme-light">\u6dfa\u8272</label>'
+          '<input type="radio" name="theme" id="theme-dark"><label for="theme-dark">\u6df1\u8272</label>'
+          '</div>' in page, True)
+    check("English theme labels gone",
+          [s for s in ("Colour scheme", ">Auto<", ">Light<", ">Dark<") if s in page], [])
+
+
+def test_theme_switch_placement():
+    check("switch first in main, before the title",
+          "<main>" + _SWITCH + "<h1>whoami: repo-a</h1>" in _html(_full_doc()), True)
+    minimal = _html(_doc())
+    check("switch first in main on a minimal page", "<main>" + _SWITCH + "<h1>whoami</h1>" in minimal, True)
+    check("switch rendered once", minimal.count('<div class="theme"'), 1)
+    # the timeline sits under the title, so the switch still leads
+    check("switch ahead of the title with a timeline",
+          "<main>" + _SWITCH + "<h1>whoami</h1>" in _html(_doc(timeline=_tl_full())), True)
+
+    code, out, err, out_path = _main(_doc())
+    check("a valid document exits 0", (code, err), (0, ""))
+    with open(out_path, encoding="utf-8") as f:
+        check("the written page holds the switch", "<main>" + _SWITCH + "<h1>whoami</h1>" in f.read(), True)
+    # the switch is page chrome, so the terminal summary never shows it
+    check("switch labels absent from the Markdown", [ln for ln in _md_lines(_full_doc()) if "Colour scheme" in ln], [])
+
+
+def test_theme_needs_no_script():
+    for name, doc in (("minimal", _doc()), ("full", _full_doc())):
+        page = _html(doc)
+        check(name + ": switch present", _SWITCH in page, True)
+        check(name + ": no script element", "<script" in page.lower(), False)
+        check(name + ": no inline event handler", re.findall(r"\son[a-z]+\s*=", page, re.I), [])
+
+
+def test_theme_tokens():
+    check("light theme leads with its colour scheme", rr.LIGHT.startswith("color-scheme:light;"), True)
+    check("dark theme leads with its colour scheme", rr.DARK.startswith("color-scheme:dark;"), True)
+    check("light theme tokens, each once", re.findall(r"(--[\w-]+):", rr.LIGHT), _TOKENS)
+    check("dark theme tokens, each once", re.findall(r"(--[\w-]+):", rr.DARK), _TOKENS)
+    # a token read by the page but set by neither theme would fall back to nothing in both,
+    # and --icon is set per section rather than per theme
+    check("every token the page reads comes from the themes",
+          sorted(set(re.findall(r"var\((--[\w-]+)\)", rr.CSS)) - {"--icon"}), sorted(_TOKENS))
+    check("the two themes differ", rr.LIGHT == rr.DARK, False)
+
+
+def test_theme_css():
+    style = _style(_html(_doc()))
+    check("stylesheet opens with the themes", style.startswith(rr.THEMES), True)
+    # written by hand: the system rule for each scheme, then a forced rule per scheme that a checked radio turns on
+    check("themes in their four rules", rr.THEMES,
+          ":root { " + rr.LIGHT + " }\n"
+          "@media (prefers-color-scheme: dark) { :root { " + rr.DARK + " } }\n"
+          ":root:has(#theme-light:checked) { " + rr.LIGHT + " }\n"
+          ":root:has(#theme-dark:checked) { " + rr.DARK + " }\n")
+
+    # the bodies are read back off the page, so a forced rule that drifted from its system rule shows up here
+    bodies = {}
+    for key, pattern in (("system light", r"^:root \{ (.*?) \}\n"),
+                         ("system dark", r"@media \(prefers-color-scheme: dark\) \{ :root \{ (.*?) \} \}"),
+                         ("forced light", r":root:has\(#theme-light:checked\) \{ (.*?) \}"),
+                         ("forced dark", r":root:has\(#theme-dark:checked\) \{ (.*?) \}")):
+        found = re.search(pattern, style, re.S)
+        bodies[key] = found.group(1) if found else None
+    check("system light rule holds the light tokens", bodies["system light"], rr.LIGHT)
+    check("system dark rule holds the dark tokens", bodies["system dark"], rr.DARK)
+    check("forced light repeats the system light tokens", bodies["forced light"], bodies["system light"])
+    check("forced dark repeats the system dark tokens", bodies["forced dark"], bodies["system dark"])
+    # equal-specificity rules resolve by order, so the system dark rule must follow the light one it overrides
+    starts = [style.find(s) for s in (":root {", "@media (prefers-color-scheme: dark)",
+                                      ":root:has(#theme-light:checked)", ":root:has(#theme-dark:checked)")]
+    check("the four rules in order", (starts[0], starts == sorted(starts)), (0, True))
+
+    # each forced rule names a radio the switch renders, or no click could turn it on
+    page = _html(_doc())
+    for key in ("light", "dark"):
+        check("forced %s rule matches a rendered radio" % key,
+              ("#theme-%s:checked" % key in style, '<input type="radio" name="theme" id="theme-%s">' % key in page),
+              (True, True))
+    check("switch hidden when printed", "@media print { .theme { display:none; } }" in style, True)
+
+
 # ----- a cp1252 console ----------------------------------------------------------
 
 def test_non_ascii_on_cp1252_console():
@@ -2308,6 +2446,8 @@ _TESTS = (test_valid_document_renders, test_validation_document, test_validation
           test_sha_pattern, test_validation_sha,
           test_validation_labels_completeness, test_validation_sha_and_labels_problem_order, test_colon_label,
           test_markdown_section_order, test_diagram_markdown_direct, test_markdown_implications_lines,
+          test_theme_labels, test_theme_switch, test_theme_switch_placement, test_theme_needs_no_script,
+          test_theme_tokens, test_theme_css,
           test_non_ascii_on_cp1252_console, test_diagram_on_cp1252_console)
 
 

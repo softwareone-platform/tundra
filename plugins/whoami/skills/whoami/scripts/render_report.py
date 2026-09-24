@@ -65,6 +65,10 @@ LABELS = {
     "timeline_close": "Read closely",
     "timeline_ai": "AI shows up",
     "timeline_prompts": "Prompts",
+    "theme": "Colour scheme",
+    "theme_auto": "Auto",
+    "theme_light": "Light",
+    "theme_dark": "Dark",
 }
 
 
@@ -386,14 +390,19 @@ def scope_rows(scope):
     return "".join(rows)
 
 
-CSS = """
-:root { --paper:#eef1f4; --sheet:#ffffff; --ink:#17202b; --muted:#4f5a68; --rule:#dde2e8;
-  --right:#157a45; --right-wash:#dcf5e6; --miss:#b25a0a; --miss-wash:#fdefd6; --focus:#2563eb; --tip:#17202b; --tip-ink:#ffffff;
-  --tl-bar:#5b6b7f; --tl-prompt:#2f6fe0; }
-@media (prefers-color-scheme: dark) { :root { --paper:#1b2027; --sheet:#232a33; --ink:#eef2f6; --muted:#bcc5d0; --rule:#38414d;
-  --right:#72e0a4; --right-wash:#1f5c3d; --miss:#f5b54a; --miss-wash:#634a1a; --focus:#8ab4ff; --tip:#eef2f6; --tip-ink:#17202b;
-  --tl-bar:#a9b7c6; --tl-prompt:#8ab4ff; } }
-* { box-sizing:border-box; }
+LIGHT = ("color-scheme:light; --paper:#eef1f4; --sheet:#ffffff; --ink:#17202b; --muted:#4f5a68; --rule:#dde2e8;\n"
+         "  --right:#157a45; --right-wash:#dcf5e6; --miss:#b25a0a; --miss-wash:#fdefd6; --focus:#2563eb; --tip:#17202b; --tip-ink:#ffffff;\n"
+         "  --tl-bar:#5b6b7f; --tl-prompt:#2f6fe0;")
+DARK = ("color-scheme:dark; --paper:#1b2027; --sheet:#232a33; --ink:#eef2f6; --muted:#bcc5d0; --rule:#38414d;\n"
+        "  --right:#72e0a4; --right-wash:#1f5c3d; --miss:#f5b54a; --miss-wash:#634a1a; --focus:#8ab4ff; --tip:#eef2f6; --tip-ink:#17202b;\n"
+        "  --tl-bar:#a9b7c6; --tl-prompt:#8ab4ff;")
+
+# the switch overrides the system setting in either direction, and Auto leaves the system in charge.
+# A checked radio is read by :has(), so the page needs no script and remembers nothing between openings.
+THEMES = (":root { %s }\n@media (prefers-color-scheme: dark) { :root { %s } }\n"
+          ":root:has(#theme-light:checked) { %s }\n:root:has(#theme-dark:checked) { %s }\n") % (LIGHT, DARK, LIGHT, DARK)
+
+CSS = THEMES + """* { box-sizing:border-box; }
 body { margin:0; background:var(--paper); color:var(--ink);
   font:16px/1.7 "Segoe UI Variable Text","Segoe UI",-apple-system,"PingFang TC","Microsoft JhengHei","Noto Sans CJK TC",sans-serif; }
 main { max-width:1080px; margin:32px auto; padding:44px 52px 56px; background:var(--sheet); border-radius:12px; }
@@ -481,6 +490,14 @@ figure.timeline { margin:24px 0 0; font-size:13px; color:var(--muted); }
 .tl-key { display:inline-flex; align-items:center; gap:7px; }
 .tl-key .tl-seg { position:static; display:inline-block; width:22px; }
 .tl-key .tl-ai { position:relative; top:0; height:14px; margin:0 3px 0 5px; }
+.theme { float:right; display:flex; margin:4px 0 12px 20px; border:1px solid var(--rule); border-radius:8px; overflow:hidden; font-size:13px; }
+/* the radios stay in the page for the keyboard and screen readers, and their labels are what a reader sees and clicks */
+.theme input { position:absolute; opacity:0; width:1px; height:1px; }
+.theme label { padding:3px 11px; color:var(--muted); cursor:pointer; line-height:1.6; }
+.theme label + input + label { border-left:1px solid var(--rule); }
+.theme input:checked + label { background:var(--rule); color:var(--ink); font-weight:600; }
+.theme input:focus-visible + label { outline:2px solid var(--focus); outline-offset:-2px; }
+@media print { .theme { display:none; } }
 @media (max-width:900px) { .sides, .lanes.n2, .lanes.n3 { grid-template-columns:1fr; } }
 @media (max-width:560px) { .tl-row { grid-template-columns:1fr; gap:2px; margin-bottom:6px; } .tl-axis .tl-name { display:none; }
   .tl-legend { margin-left:0; } .tl-tick.minor { display:none; } }
@@ -492,7 +509,7 @@ figure.timeline { margin:24px 0 0; font-size:13px; color:var(--muted); }
 def render_html(doc, lab):
     names = names_by_id(doc)
     summary = doc["summary"]
-    body = ['<h1>%s</h1>' % esc(doc.get("title") or lab["title"])]
+    body = [theme_switch(lab), '<h1>%s</h1>' % esc(doc.get("title") or lab["title"])]
     if doc.get("scope_line"):
         body.append('<p class="scopeline">%s</p>' % esc(doc["scope_line"]))
     if doc.get("timeline"):
@@ -550,6 +567,12 @@ def render_html(doc, lab):
     return ('<!doctype html><html lang="%s"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             "<title>%s</title><style>%s</style></head><body><main>%s</main></body></html>\n") % (
         esc(doc.get("language", "en")), esc(doc.get("title") or lab["title"]), CSS, "".join(body))
+
+
+def theme_switch(lab):
+    options = "".join('<input type="radio" name="theme" id="theme-%s"%s><label for="theme-%s">%s</label>' % (
+        key, " checked" if key == "auto" else "", key, esc(lab["theme_" + key])) for key in ("auto", "light", "dark"))
+    return '<div class="theme" role="radiogroup" aria-label="%s">%s</div>' % (esc(lab["theme"]), options)
 
 
 def timeline_html(timeline, lab):
