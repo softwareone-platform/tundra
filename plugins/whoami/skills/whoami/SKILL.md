@@ -1,6 +1,6 @@
 ---
 name: whoami
-description: A self-assessment from the code you wrote, the prompts you gave Claude, and the instructions you left it. It tests each pattern against what could explain it away, and reports what it concludes about how you work.
+description: A self-assessment from the code shipped under your name, the prompts you gave Claude, and the instructions you left it. It tests each pattern against what could explain it away, and reports what it concludes about how you work.
 argument-hint: "[repository or directory ...]"
 disable-model-invocation: true
 ---
@@ -141,6 +141,7 @@ Write the report as one JSON document in the language the person has been using,
 - **Diagrams**: add one wherever a shape explains better than a sentence, such as how a kind of defect gets found or missed, or how the axes relate. Give it as structure, steps in lanes as the schema describes, never as text drawn into boxes. One idea per diagram, and a comparison as lanes side by side in one diagram.
 - **Strengths, gaps, and styles**: each pattern that holds or narrowed, stated in its narrowed form. Its confidence is `verified`, or `depends` with the constraint for a conditional one. Describe a code pattern as what shipped under the person's name, not as what they typed.
 - **Implications**: what the axes mean for how the person works. Say where a strength is leverage, where a gap will recur, and what their standing rules do not yet cover. Stay at the level of the pattern. How to fix a particular piece of code is not this report's subject.
+- **Timeline**: the dates behind the scope, taken from what you read rather than estimated. For each repository, the dates of the oldest and newest changes read, from `git log`, and the date AI shows up. For the sample, the date where the newest changes begin. For the prompts, the first and last timestamps `extract_prompts.py` returned.
 - **Scope**: the repositories and where AI shows up in each, the identities, how many changes were read from the recent past and from the older history and the dates each covers, how many sessions and rules were read, the dates the prompts span, and what was left out and why.
 - **Dissolved** candidates and single **events** go in the appendix, which the HTML keeps collapsed.
 

@@ -7,12 +7,15 @@ Exit status 2 means the document does not match the schema in report-schema.md, 
 """
 
 import argparse
+import datetime
 import html
 import json
 import os
+import re
 import sys
 
 INVALID = 2
+DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 SOURCES = ("code", "prompts", "instructions")
 LEVELS = ("verified", "depends")
@@ -54,6 +57,10 @@ LABELS = {
     "separator": ", ",
     "list_separator": "; ",
     "conditional": "Conditional",
+    "timeline_thin": "Read thinly",
+    "timeline_close": "Read closely",
+    "timeline_ai": "AI shows up",
+    "timeline_prompts": "Prompts",
 }
 
 
@@ -167,7 +174,56 @@ def validate(doc):
                 if not isinstance(detail, list) or not all(isinstance(x, str) for x in detail):
                     problems.append("%s: 'detail' is not a list of text" % step_where)
 
+    if doc.get("timeline") is not None:
+        problems += validate_timeline(doc["timeline"])
+
     need(doc, "scope", "document", dict)
+    return problems
+
+
+def validate_timeline(timeline):
+    problems = []
+
+    def day(obj, key, where, required=True):
+        value = obj.get(key)
+        if value is None and not required:
+            return None
+        # fromisoformat alone also takes forms such as 20260102, which a reader of the JSON would not expect
+        if isinstance(value, str) and DATE.match(value):
+            try:
+                return datetime.date.fromisoformat(value)
+            except ValueError:
+                pass
+        problems.append("%s: '%s' is not a date written YYYY-MM-DD" % (where, key))
+        return None
+
+    def span(obj, where):
+        start, end = day(obj, "from", where), day(obj, "to", where)
+        if start and end and start > end:
+            problems.append("%s: 'from' is after 'to'" % where)
+
+    if not isinstance(timeline, dict):
+        return ["'timeline' is not an object"]
+    repositories = timeline.get("repositories")
+    if not isinstance(repositories, list) or not repositories:
+        problems.append("timeline: 'repositories' is missing or empty")
+        repositories = []
+    for i, repo in enumerate(repositories):
+        where = "timeline.repositories[%d]" % i
+        if not isinstance(repo, dict):
+            problems.append("%s: a repository must be an object" % where)
+            continue
+        if not isinstance(repo.get("name"), str) or not repo["name"]:
+            problems.append("%s: 'name' is missing or empty" % where)
+        span(repo, where)
+        day(repo, "ai_from", where, required=False)
+    day(timeline, "recent_from", "timeline", required=False)
+    prompts = timeline.get("prompts")
+    if prompts is not None:
+        if isinstance(prompts, dict):
+            span(prompts, "timeline.prompts")
+        else:
+            problems.append("timeline: 'prompts' is not an object")
     return problems
 
 
@@ -273,9 +329,11 @@ def scope_rows(scope):
 
 CSS = """
 :root { --paper:#eef1f4; --sheet:#ffffff; --ink:#17202b; --muted:#4f5a68; --rule:#dde2e8;
-  --right:#157a45; --right-wash:#dcf5e6; --miss:#b25a0a; --miss-wash:#fdefd6; --focus:#2563eb; --tip:#17202b; --tip-ink:#ffffff; }
+  --right:#157a45; --right-wash:#dcf5e6; --miss:#b25a0a; --miss-wash:#fdefd6; --focus:#2563eb; --tip:#17202b; --tip-ink:#ffffff;
+  --tl-bar:#5b6b7f; --tl-prompt:#2f6fe0; }
 @media (prefers-color-scheme: dark) { :root { --paper:#1b2027; --sheet:#232a33; --ink:#eef2f6; --muted:#bcc5d0; --rule:#38414d;
-  --right:#72e0a4; --right-wash:#1f5c3d; --miss:#f5b54a; --miss-wash:#634a1a; --focus:#8ab4ff; --tip:#eef2f6; --tip-ink:#17202b; } }
+  --right:#72e0a4; --right-wash:#1f5c3d; --miss:#f5b54a; --miss-wash:#634a1a; --focus:#8ab4ff; --tip:#eef2f6; --tip-ink:#17202b;
+  --tl-bar:#a9b7c6; --tl-prompt:#8ab4ff; } }
 * { box-sizing:border-box; }
 body { margin:0; background:var(--paper); color:var(--ink);
   font:16px/1.7 "Segoe UI Variable Text","Segoe UI",-apple-system,"PingFang TC","Microsoft JhengHei","Noto Sans CJK TC",sans-serif; }
@@ -345,7 +403,28 @@ details ul { margin:4px 0; padding-left:18px; }
 a { color:inherit; text-decoration-color:var(--rule); text-underline-offset:3px; }
 a:hover { text-decoration-color:currentColor; }
 summary:focus-visible, a:focus-visible, .badge:focus-visible { outline:2px solid var(--focus); outline-offset:2px; border-radius:4px; }
+figure.timeline { margin:24px 0 0; font-size:13px; color:var(--muted); }
+.tl-row { display:grid; grid-template-columns:11rem 1fr; gap:14px; align-items:center; min-height:24px; }
+.tl-name { color:var(--ink); line-height:1.35; overflow-wrap:anywhere; }
+.tl-track { position:relative; height:12px; }
+/* a span of a day or two would draw nothing at this scale, so every segment keeps a visible width */
+.tl-seg { position:absolute; top:2px; height:8px; min-width:6px; border-radius:4px; }
+.tl-seg.close { background:var(--tl-bar); }
+/* hatched against solid tells the thin sample from the close reading without relying on colour */
+.tl-seg.thin { border:1px solid var(--tl-bar); background:repeating-linear-gradient(135deg, var(--tl-bar) 0 1.5px, transparent 1.5px 5px); }
+.tl-seg.prompts { background:var(--tl-prompt); }
+.tl-ai { position:absolute; top:-4px; height:20px; border-left:2px solid var(--ink); margin-left:-1px; }
+.tl-ai::before { content:""; position:absolute; left:-5px; top:-3px; width:8px; height:8px; background:var(--ink); transform:rotate(45deg); }
+.tl-axis { min-height:20px; } .tl-axis .tl-track { height:18px; border-top:1px solid var(--rule); }
+.tl-tick { position:absolute; top:2px; transform:translateX(-50%); white-space:nowrap; font-size:12px; }
+.tl-tick.start { left:0; transform:none; } .tl-tick.end { right:0; transform:none; }
+.tl-legend { display:flex; flex-wrap:wrap; gap:4px 18px; margin:6px 0 0 calc(11rem + 14px); font-size:13px; font-weight:400; color:var(--muted); max-width:none; }
+.tl-key { display:inline-flex; align-items:center; gap:7px; }
+.tl-key .tl-seg { position:static; display:inline-block; width:22px; }
+.tl-key .tl-ai { position:relative; top:0; height:14px; margin:0 3px 0 5px; }
 @media (max-width:900px) { .sides, .lanes.n2, .lanes.n3 { grid-template-columns:1fr; } }
+@media (max-width:560px) { .tl-row { grid-template-columns:1fr; gap:2px; margin-bottom:6px; } .tl-axis .tl-name { display:none; }
+  .tl-legend { margin-left:0; } .tl-tick.minor { display:none; } }
 @media (max-width:760px) { main { margin:0; padding:28px 16px 48px; border-radius:0; }
   .tablewrap { overflow-x:auto; } table.patterns, table.implications { min-width:640px; } }
 """
@@ -357,6 +436,8 @@ def render_html(doc, lab):
     body = ['<h1>%s</h1>' % esc(doc.get("title") or lab["title"])]
     if doc.get("scope_line"):
         body.append('<p class="scopeline">%s</p>' % esc(doc["scope_line"]))
+    if doc.get("timeline"):
+        body.append(timeline_html(doc["timeline"], lab))
 
     body.append('<section class="summary"><h2>%s</h2>' % esc(lab["summary"]))
     body += ["<p>%s</p>" % esc(par) for par in str(summary["text"]).split("\n\n")]
@@ -410,6 +491,74 @@ def render_html(doc, lab):
     return ('<!doctype html><html lang="%s"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             "<title>%s</title><style>%s</style></head><body><main>%s</main></body></html>\n") % (
         esc(doc.get("language", "en")), esc(doc.get("title") or lab["title"]), CSS, "".join(body))
+
+
+def timeline_html(timeline, lab):
+    day = datetime.date.fromisoformat
+    repositories = timeline["repositories"]
+    recent = day(timeline["recent_from"]) if timeline.get("recent_from") else None
+    prompts = timeline.get("prompts")
+    dates = [day(r[k]) for r in repositories for k in ("from", "to", "ai_from") if r.get(k)]
+    if prompts:
+        dates += [day(prompts["from"]), day(prompts["to"])]
+    lo, hi = min(dates), max(dates)
+    total = max((hi - lo).days, 1)
+    pos = lambda d: (d - lo).days * 100.0 / total
+
+    def segment(kind, start, end):
+        return '<span class="tl-seg %s" style="left:%.2f%%;width:%.2f%%" title="%s – %s"></span>' % (
+            kind, pos(start), pos(end) - pos(start), start, end)
+
+    def row(name, track):
+        return '<div class="tl-row"><div class="tl-name">%s</div><div class="tl-track">%s</div></div>' % (esc(name), track)
+
+    rows, kinds = [], set()
+    for r in repositories:
+        start, end = day(r["from"]), day(r["to"])
+        parts = []
+        # the older changes are a thin sample spread across the history, so they are drawn apart from the newest,
+        # which were all read, rather than as one bar that claims the whole span was read alike
+        if recent and recent > start:
+            parts.append(segment("thin", start, min(recent, end)))
+            kinds.add("thin")
+        if not recent or recent < end:
+            parts.append(segment("close", max(start, recent) if recent else start, end))
+            kinds.add("close")
+        if r.get("ai_from"):
+            parts.append('<span class="tl-ai" style="left:%.2f%%" title="%s: %s"></span>' % (
+                pos(day(r["ai_from"])), esc(lab["timeline_ai"]), esc(r["ai_from"])))
+            kinds.add("ai")
+        rows.append(row(r["name"], "".join(parts)))
+    if prompts:
+        rows.append(row(lab["timeline_prompts"], segment("prompts", day(prompts["from"]), day(prompts["to"]))))
+        kinds.add("prompts")
+
+    months = (hi.year - lo.year) * 12 + hi.month - lo.month
+    step = 1 if months <= 8 else 3 if months <= 24 else 6 if months <= 60 else 12
+    ticks = ['<span class="tl-tick start">%s</span>' % lo, '<span class="tl-tick end">%s</span>' % hi]
+    y, m, n = lo.year, lo.month, 0
+    while True:
+        m += 1
+        if m > 12:
+            y, m = y + 1, 1
+        mark = datetime.date(y, m, 1)
+        if mark >= hi:
+            break
+        # an end date takes about a tenth of a wide track and a quarter of a phone-width one,
+        # so a tick that near an end is dropped, or kept only for wide screens
+        at = pos(mark)
+        if (m - 1) % step == 0 and 12 < at < 88:
+            narrow = n % 2 or not 28 < at < 72
+            ticks.append('<span class="tl-tick%s" style="left:%.2f%%">%s</span>' % (
+                " minor" if narrow else "", at, y if step == 12 else "%d-%02d" % (y, m)))
+            n += 1
+    rows.append('<div class="tl-row tl-axis"><div class="tl-name"></div><div class="tl-track">%s</div></div>' % "".join(ticks))
+
+    swatches = {"thin": '<i class="tl-seg thin"></i>', "close": '<i class="tl-seg close"></i>',
+                "ai": '<i class="tl-ai"></i>', "prompts": '<i class="tl-seg prompts"></i>'}
+    legend = "".join('<span class="tl-key">%s%s</span>' % (swatches[k], esc(lab["timeline_" + k]))
+                     for k in ("thin", "close", "ai", "prompts") if k in kinds)
+    return '<figure class="timeline">%s<figcaption class="tl-legend">%s</figcaption></figure>' % ("".join(rows), legend)
 
 
 def diagram_html(d):

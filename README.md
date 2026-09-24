@@ -28,7 +28,7 @@ Use the full HTTPS URL above. The `softwareone-platform/tundra` shorthand is als
 | [`disconfirm-first`](#disconfirm-first) | Adversarial review of an issue, a plan, or an implemented fix |
 | [`test-authoring`](#test-authoring) | Unit and integration test authoring, each written by one agent and checked by another |
 | [`pr-lifecycle`](#pr-lifecycle) | Opening a pull request and resolving its review comments, on Azure DevOps or GitHub |
-| [`whoami`](#whoami) | A self-assessment from your code, your prompts, and your CLAUDE.md, concluding how you work |
+| [`whoami`](#whoami) | A self-assessment from your code, your prompts, and your CLAUDE.md, concluding how you work, as an HTML report |
 
 ### From [issue-to-pr](https://github.com/softwareone-platform/issue-to-pr)
 
@@ -70,7 +70,12 @@ Finds test gaps and writes or refreshes unit and integration tests. Every test c
 
 #### whoami
 
-`/whoami:whoami` reads the code you wrote by hand, the prompts you gave Claude when it implemented for you, and the instructions you left it in `CLAUDE.md`. It finds the patterns that recur, tests each against what could explain it away, and concludes what kind of question you reliably get right and what kind you reliably miss. It reads only the repositories you point it at, code only through git, and your prompts and instructions only if you agree. It is an experiment.
+`/whoami:whoami` reads the code that shipped under your name, whether you typed it or directed a model to, the prompts you gave Claude, and the instructions you left it in `CLAUDE.md`. It finds the patterns that recur, tests each against what could explain it away, and concludes what kind of question you reliably get right and what kind you reliably miss. The result is a self-contained HTML report that opens with a timeline of what the conclusion rests on. It reads only the repositories you point it at, code only through git, and your prompts and instructions only if you agree. It is an experiment.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="plugins/whoami/docs/report-overview-dark.png">
+  <img alt="A whoami report on two fictional repositories: a timeline of what was read, the conclusion with one axis, and a flow diagram" src="plugins/whoami/docs/report-overview-light.png">
+</picture>
 
 [Full details of whoami](plugins/whoami/README.md)
 
