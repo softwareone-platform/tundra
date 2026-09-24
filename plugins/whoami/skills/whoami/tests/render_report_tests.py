@@ -385,6 +385,8 @@ def test_html_loads_nothing():
         check(name + ": no remote src or href", re.findall(r"""(?:src|href)\s*=\s*["']?\s*https?:""", page, re.I), [])
         check(name + ": no script element", "<script" in page.lower(), False)
         check(name + ": no link element", "<link" in page.lower(), False)
+        # an inline handler runs script with no script element, so the check above alone would miss it
+        check(name + ": no inline event handler", re.findall(r"\son[a-z]+\s*=", page, re.I), [])
         # an empty match list would pass the data: check without having looked at anything
         check(name + ": a url() value found", len(re.findall(url_target, page)) > 0, True)
         check(name + ": no CSS import, and no url() but a data: URI", ("@import" in page, fetched(page)), (False, []))
@@ -2323,15 +2325,12 @@ def test_theme_switch_placement():
     with open(out_path, encoding="utf-8") as f:
         check("the written page holds the switch", "<main>" + _SWITCH + "<h1>whoami</h1>" in f.read(), True)
     # the switch is page chrome, so the terminal summary never shows it
-    check("switch labels absent from the Markdown", [ln for ln in _md_lines(_full_doc()) if "Colour scheme" in ln], [])
-
-
-def test_theme_needs_no_script():
-    for name, doc in (("minimal", _doc()), ("full", _full_doc())):
-        page = _html(doc)
-        check(name + ": switch present", _SWITCH in page, True)
-        check(name + ": no script element", "<script" in page.lower(), False)
-        check(name + ": no inline event handler", re.findall(r"\son[a-z]+\s*=", page, re.I), [])
+    md = _md_lines(_full_doc())
+    # an empty summary would pass the absence check without having looked at anything
+    check("fixture: Markdown lines found", len(md) > 0, True)
+    # written by hand: every piece of the switch that could leak, the group, its three labels, and its name
+    pieces = ('class="theme"', ">Auto<", ">Light<", ">Dark<", 'aria-label="Colour scheme"', "Colour scheme")
+    check("switch pieces absent from the Markdown", [(p, ln) for p in pieces for ln in md if p in ln], [])
 
 
 def test_theme_tokens():
@@ -2380,6 +2379,72 @@ def test_theme_css():
               ("#theme-%s:checked" % key in style, '<input type="radio" name="theme" id="theme-%s">' % key in page),
               (True, True))
     check("switch hidden when printed", "@media print { .theme { display:none; } }" in style, True)
+
+
+# written by hand from where the stylesheet draws each colour: text on a background, at the WCAG 2 AA minimum for body text
+_TEXT_PAIRS = (("ink", "sheet"), ("muted", "sheet"), ("ink", "paper"),
+               ("right", "sheet"), ("miss", "sheet"),
+               ("ink", "right-wash"), ("muted", "right-wash"), ("right", "right-wash"),
+               ("ink", "miss-wash"), ("muted", "miss-wash"), ("miss", "miss-wash"),
+               ("tip-ink", "tip"))
+# the timeline's bars and prompt marks are shapes rather than text, so they need only the non-text minimum
+_SHAPE_PAIRS = (("tl-bar", "sheet"), ("tl-prompt", "sheet"))
+
+
+def _theme_colours(theme):
+    return dict(re.findall(r"--([\w-]+):(#[0-9a-f]{6});", theme))
+
+
+# the WCAG 2 arithmetic is written out here rather than taken from the renderer,
+# so a mistake in one cannot hide the same mistake in the other
+def _luminance(hex_colour):
+    def linear(byte):
+        c = byte / 255
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (int(hex_colour[i:i + 2], 16) for i in (1, 3, 5))
+    return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+
+
+def _contrast(fg, bg):
+    hi, lo = sorted((_luminance(fg), _luminance(bg)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _contrast_failures(theme):
+    colours = _theme_colours(theme)
+    return [(fg, bg, round(_contrast(colours[fg], colours[bg]), 2))
+            for pairs, least in ((_TEXT_PAIRS, 4.5), (_SHAPE_PAIRS, 3.0))
+            for fg, bg in pairs if _contrast(colours[fg], colours[bg]) < least]
+
+
+def test_theme_contrast():
+    # written by hand: the published extremes, and the grey commonly cited as the lightest that passes AA on white
+    check("black on white", round(_contrast("#000000", "#ffffff"), 2), 21.0)
+    check("white on white", round(_contrast("#ffffff", "#ffffff"), 2), 1.0)
+    check("#767676 on white", round(_contrast("#767676", "#ffffff"), 2), 4.54)
+    check("order of the two colours does not matter", round(_contrast("#ffffff", "#767676"), 2), 4.54)
+    # written by hand: the amber label on its wash before it was darkened, which this check was written to catch
+    check("old amber on its wash", round(_contrast("#b25a0a", "#fdefd6"), 2), 4.24)
+
+    for name, theme in (("light", rr.LIGHT), ("dark", rr.DARK)):
+        # a token in any other notation would drop out of the parse and could not be measured
+        check(name + ": every token a #rrggbb colour", sorted(_theme_colours(theme)), sorted(t[2:] for t in _TOKENS))
+        check(name + ": every pair readable", _contrast_failures(theme), [])
+
+    # hypothetical palettes, each the real one with a single colour swapped, so the check is shown to reject them
+    old_amber = re.sub(r"--miss:#[0-9a-f]{6};", "--miss:#b25a0a;", rr.LIGHT)
+    check("amber too light for its wash fails", _contrast_failures(old_amber), [("miss", "miss-wash", 4.24)])
+    black_ink = re.sub(r"--ink:#[0-9a-f]{6};", "--ink:#000000;", rr.DARK)
+    check("black ink on the dark theme fails on every background",
+          _contrast_failures(black_ink),
+          [("ink", "sheet", 1.45), ("ink", "paper", 1.28), ("ink", "right-wash", 2.66), ("ink", "miss-wash", 2.52)])
+    # a bar at 3.03 passes the shape minimum it would fail as text, and one at 2.61 fails both
+    faint_bar = re.sub(r"--tl-bar:#[0-9a-f]{6};", "--tl-bar:#949494;", rr.LIGHT)
+    # a passing case proves nothing unless the swap happened, so the swapped colour is looked for too
+    check("a bar just over the shape minimum passes",
+          ("--tl-bar:#949494;" in faint_bar, _contrast_failures(faint_bar)), (True, []))
+    fainter_bar = re.sub(r"--tl-bar:#[0-9a-f]{6};", "--tl-bar:#a0a0a0;", rr.LIGHT)
+    check("a bar under the shape minimum fails", _contrast_failures(fainter_bar), [("tl-bar", "sheet", 2.61)])
 
 
 # ----- a cp1252 console ----------------------------------------------------------
@@ -2446,8 +2511,8 @@ _TESTS = (test_valid_document_renders, test_validation_document, test_validation
           test_sha_pattern, test_validation_sha,
           test_validation_labels_completeness, test_validation_sha_and_labels_problem_order, test_colon_label,
           test_markdown_section_order, test_diagram_markdown_direct, test_markdown_implications_lines,
-          test_theme_labels, test_theme_switch, test_theme_switch_placement, test_theme_needs_no_script,
-          test_theme_tokens, test_theme_css,
+          test_theme_labels, test_theme_switch, test_theme_switch_placement,
+          test_theme_tokens, test_theme_css, test_theme_contrast,
           test_non_ascii_on_cp1252_console, test_diagram_on_cp1252_console)
 
 

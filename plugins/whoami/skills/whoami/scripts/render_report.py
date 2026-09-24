@@ -391,7 +391,7 @@ def scope_rows(scope):
 
 
 LIGHT = ("color-scheme:light; --paper:#eef1f4; --sheet:#ffffff; --ink:#17202b; --muted:#4f5a68; --rule:#dde2e8;\n"
-         "  --right:#157a45; --right-wash:#dcf5e6; --miss:#b25a0a; --miss-wash:#fdefd6; --focus:#2563eb; --tip:#17202b; --tip-ink:#ffffff;\n"
+         "  --right:#157a45; --right-wash:#dcf5e6; --miss:#a65306; --miss-wash:#fdefd6; --focus:#2563eb; --tip:#17202b; --tip-ink:#ffffff;\n"
          "  --tl-bar:#5b6b7f; --tl-prompt:#2f6fe0;")
 DARK = ("color-scheme:dark; --paper:#1b2027; --sheet:#232a33; --ink:#eef2f6; --muted:#bcc5d0; --rule:#38414d;\n"
         "  --right:#72e0a4; --right-wash:#1f5c3d; --miss:#f5b54a; --miss-wash:#634a1a; --focus:#8ab4ff; --tip:#eef2f6; --tip-ink:#17202b;\n"
