@@ -1,7 +1,7 @@
 {
   "name": "whoami",
   "description": "A self-assessment from your code, your prompts to Claude, and your CLAUDE.md, testing each pattern against what could explain it away before concluding how you work",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "repository": "https://github.com/softwareone-platform/tundra",
   "homepage": "https://github.com/softwareone-platform/tundra/tree/main/plugins/whoami",
   "license": "Apache-2.0",
