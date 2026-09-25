@@ -1,7 +1,7 @@
 ---
 name: whoami
 description: A self-assessment from the code shipped under your name, the prompts you gave Claude, and the instructions you left it. It tests each pattern against what could explain it away, and reports what it concludes about how you work.
-argument-hint: "[repository or directory ...] [in <language>]"
+argument-hint: "[repositories and report language, in your own words]"
 disable-model-invocation: true
 ---
 
@@ -21,11 +21,16 @@ The report is a conclusion backed by evidence, rendered as an HTML file with a M
 
 Arguments: $ARGUMENTS
 
-Each argument is a repository, or a directory whose immediate subdirectories are repositories. With no path among the arguments, the scope is the repository this session is in. Words that are not a path, such as "in Traditional Chinese", ask for the language the report is written in. Tell a path from such words by whether it exists, since a directory can have any name. With no language asked for, the report is in the language the person has been using with you.
+The arguments are a request in the person's own words, such as "~/source/repos/orders and ~/source/repos/accounts, in German". Read two things from it:
+
+- **where**: repositories, or directories whose immediate subdirectories are repositories. A relative path is relative to the working directory. Check that each one exists, and ask about one that does not in the confirmation below rather than searching the disk for it, because the scope is only what the person names. With no path in the request, the scope is the repository this session is in.
+- **the language** the report is written in. Without one, it is the language the person has been using with you.
+
+State what you read from the request in the confirmation, so a misreading is caught before anything is read.
 
 Read code **through git** only: `git log`, `git show <sha>`, `git show <sha>:<path>`, `git grep <pattern> <sha>`, `git blame <sha> -- <path>`. Leave the working tree alone, so untracked and ignored files (local settings, secrets, unfinished work) stay out of the analysis whatever the scope directory holds. In Git Bash on Windows, set `MSYS_NO_PATHCONV=1` for any command that takes `<rev>:<path>`, because the shell otherwise rewrites the argument into a Windows path.
 
-Confirm the repositories and the sources in one AskUserQuestion call. Say plainly what each source sends to the model:
+Confirm the repositories, the language, and the sources in one AskUserQuestion call. Say plainly what each source sends to the model:
 
 - **code**: the diffs of their commits and the code around them, the same way a file reaches the model when they ask Claude to read it;
 - **prompts**: only the text they typed, with pasted content replaced by its size, from the transcripts on this machine. Those prompts reached the model once already, when they were typed. The transcripts go back only as far as Claude Code's retention setting keeps them;
@@ -35,7 +40,7 @@ Tell what each repository is from the material rather than asking: an experiment
 
 Do not ask who typed the code or when an AI tool started taking part. Nobody remembers that date, and it does not decide what the code says about the person: code a model wrote under their direction shipped under their name, shaped by what they asked for and what they let through.
 
-Done when the person has confirmed the repositories and sources.
+Done when the person has confirmed the repositories, the language, and the sources.
 
 ## 2. Identity
 

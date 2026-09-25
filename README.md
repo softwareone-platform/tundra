@@ -70,7 +70,7 @@ Finds test gaps and writes or refreshes unit and integration tests. Every test c
 
 #### whoami
 
-`/whoami:whoami` reads the code that shipped under your name, whether you typed it or directed a model to, the prompts you gave Claude, and the instructions you left it in `CLAUDE.md`. It finds the patterns that recur, tests each against what could explain it away, and concludes what kind of question you reliably get right and what kind you reliably miss. The result is a self-contained HTML report that opens with a timeline of what the conclusion rests on. It reads only the repositories you point it at, code only through git, and your prompts and instructions only if you agree. It is an experiment.
+`/whoami:whoami` reads the code that shipped under your name, whether you typed it or directed a model to, the prompts you gave Claude, and the instructions you left it in `CLAUDE.md`. It finds the patterns that recur, tests each against what could explain it away, and concludes what kind of question you reliably get right and what kind you reliably miss. The result is a self-contained HTML report that opens with a timeline of what the conclusion rests on. It reads only the repositories you point it at, code only through git, and your prompts and instructions only if you agree.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="plugins/whoami/docs/report-overview-dark.png">
