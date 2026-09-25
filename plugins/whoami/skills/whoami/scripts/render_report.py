@@ -424,7 +424,9 @@ section.appendix { --icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.or
 .summary p { max-width:70ch; margin:0 0 14px; font-size:17px; }
 h3 { font:400 23px/1.35 "Iowan Old Style","Palatino Linotype","Book Antiqua",Georgia,"Noto Serif CJK TC","Songti TC",serif; margin:0 0 6px; }
 h4 { margin:14px 0 4px; font-size:13px; font-weight:600; color:var(--muted); }
-.axes { display:grid; gap:32px; margin:30px 0 8px; }
+.axes { display:grid; gap:20px; margin:30px 0 8px; }
+/* a frame keeps an axis's name, description and two sides together, which a second axis made hard to see */
+.axis { border:1px solid var(--rule); border-radius:12px; padding:20px 22px 22px; }
 .axis p { margin:0 0 14px; max-width:70ch; }
 .sides { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
 .side { border-radius:10px; padding:14px 18px 16px; }
@@ -436,6 +438,9 @@ h4 { margin:14px 0 4px; font-size:13px; font-weight:600; color:var(--muted); }
 .side .links { padding-top:10px; border-top:1px solid color-mix(in srgb, currentColor 22%, transparent); }
 figure { margin:36px 0 0; }
 figcaption { font-size:16px; font-weight:600; line-height:1.45; margin:0 0 14px; max-width:70ch; }
+/* the measure is in ch, the width of a Latin digit, and a CJK character takes about two,
+   so a CJK report fills the column where a Latin one keeps its line length */
+:is(.summary p, .axis p, figcaption, .scopeline):is(:lang(zh), :lang(ja), :lang(ko)) { max-width:none; }
 .lanes { display:grid; gap:24px; } .lanes.n2 { grid-template-columns:1fr 1fr; } .lanes.n3 { grid-template-columns:1fr 1fr 1fr; }
 .lane { display:flex; flex-direction:column; align-items:stretch; }
 .lane-title { font-weight:600; font-size:14px; margin-bottom:8px; color:var(--muted); }
@@ -501,7 +506,7 @@ figure.timeline { margin:24px 0 0; font-size:13px; color:var(--muted); }
 @media (max-width:900px) { .sides, .lanes.n2, .lanes.n3 { grid-template-columns:1fr; } }
 @media (max-width:560px) { .tl-row { grid-template-columns:1fr; gap:2px; margin-bottom:6px; } .tl-axis .tl-name { display:none; }
   .tl-legend { margin-left:0; } .tl-tick.minor { display:none; } }
-@media (max-width:760px) { main { margin:0; padding:28px 16px 48px; border-radius:0; }
+@media (max-width:760px) { main { margin:0; padding:28px 16px 48px; border-radius:0; } .axis { padding:14px 14px 16px; }
   .tablewrap { overflow-x:auto; } table.patterns, table.implications { min-width:640px; } }
 """
 
@@ -520,19 +525,18 @@ def render_html(doc, lab):
     groups = {p["id"]: g for g in ("strengths", "gaps", "styles") for p in doc.get(g, [])}
     axes = []
     for axis in summary.get("axes", []):
-        # one list under both sides read as belonging to the side it sat beneath,
-        # so each side lists its own patterns and a way of working goes below both
-        refs = {g: [r for r in axis.get("patterns", []) if groups.get(r) == g] for g in ("strengths", "gaps", "styles")}
-        links = lambda label, ids: '<div class="links"><h4>%s</h4>%s</div>' % (
-            esc(label), pattern_links(ids, names)) if ids else ""
+        # each side lists the patterns of its own group, and a way of working is left to its table,
+        # because it is neither what the person gets right nor what they miss
+        refs = {g: [r for r in axis.get("patterns", []) if groups.get(r) == g] for g in ("strengths", "gaps")}
+        links = lambda ids: '<div class="links"><h4>%s</h4>%s</div>' % (
+            esc(lab["related"]), pattern_links(ids, names)) if ids else ""
         axes.append(
             '<div class="axis"><h3>%s</h3>%s<div class="sides"><div class="side strong"><b>%s</b>%s%s</div>'
-            '<div class="side weak"><b>%s</b>%s%s</div></div>%s</div>' % (
+            '<div class="side weak"><b>%s</b>%s%s</div></div></div>' % (
                 esc(axis["name"]),
                 "<p>%s</p>" % esc(axis["description"]) if axis.get("description") else "",
-                esc(lab["strong"]), esc(axis["strong"]), links(lab["related"], refs["strengths"]),
-                esc(lab["weak"]), esc(axis["weak"]), links(lab["related"], refs["gaps"]),
-                links(lab["styles"], refs["styles"])))
+                esc(lab["strong"]), esc(axis["strong"]), links(refs["strengths"]),
+                esc(lab["weak"]), esc(axis["weak"]), links(refs["gaps"])))
     if axes:
         body.append('<div class="axes">%s</div>' % "".join(axes))
     for d in doc.get("diagrams", []):

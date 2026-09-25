@@ -1367,18 +1367,17 @@ def test_axis_link_split():
     doc = _axis_doc(["g2", "y1", "s2", "g1", "s1", "y2"])
     check("fixture: mixed axis document is valid", rr.validate(doc), [])
     page = _html(doc)
-    # written by hand: strengths inside the strong side, gaps inside the weak side, ways of working after both sides
+    # written by hand: strengths inside the strong side, gaps inside the weak side, and the axis closes straight after the sides
     check("axis links split by group", '<div class="axis"><h3>axis one</h3><div class="sides">'
           '<div class="side strong"><b>Reliably gets right</b>strong side'
           '<div class="links"><h4>Related patterns</h4><a href="#s2">name s2</a><br><a href="#s1">name s1</a></div></div>'
           '<div class="side weak"><b>Reliably misses</b>weak side'
           '<div class="links"><h4>Related patterns</h4><a href="#g2">name g2</a><br><a href="#g1">name g1</a></div></div>'
-          '</div><div class="links"><h4>Ways of working</h4><a href="#y1">name y1</a><br><a href="#y2">name y2</a></div>'
-          '</div>' in page, True)
-    check("one links block per group", page.count('<div class="links">'), 3)
+          '</div></div>' in page, True)
+    check("one links block per side", page.count('<div class="links">'), 2)
 
     page = _html(_axis_doc(["s1"]))
-    # written by hand: only the strong side has an id, so the weak side and the space below the sides hold no links
+    # written by hand: only the strong side has an id, so the weak side holds no links
     check("a group with no ids emits no links", '<div class="side strong"><b>Reliably gets right</b>strong side'
           '<div class="links"><h4>Related patterns</h4><a href="#s1">name s1</a></div></div>'
           '<div class="side weak"><b>Reliably misses</b>weak side</div></div></div>' in page, True)
@@ -1408,9 +1407,125 @@ def test_axis_link_split():
     page = _html(_axis_doc(["s1", "g1", "y1"], labels={"related": m("label-related"), "styles": m("label-styles")}))
     check("overridden related label heads both sides",
           page.count('<div class="links"><h4>%s</h4>' % e("label-related")), 2)
-    check("overridden styles label heads the ways of working links",
-          '</div><div class="links"><h4>%s</h4><a href="#y1">name y1</a></div></div>' % e("label-styles") in page, True)
+    summary = _section(page, "Summary")
+    axes = summary[summary.index('<div class="axes">'):]
+    # the styles label still heads its own section, so its absence from the axes is not a label that went missing
+    check("overridden styles label kept out of the axes, heading the styles section",
+          (e("label-styles") in axes, '<section class="styles"><h2>%s</h2>' % e("label-styles") in page), (False, True))
     check("no raw script tag from the link labels", "<script" in page, False)
+
+
+def _axes_block(page):
+    # the styles table names every style too, so an absence is only meaningful inside the axes block
+    summary = _section(page, "Summary")
+    return summary[summary.index('<div class="axes">'):]
+
+
+def test_axis_omits_styles():
+    doc = _axis_doc(["y1", "y2"])
+    check("fixture: styles-only axis document is valid", rr.validate(doc), [])
+    page = _html(doc)
+    axes = _axes_block(page)
+    # written by hand: a style belongs to neither side, so both sides hold only their label and text
+    check("styles-only axis block holds the bare sides", axes,
+          '<div class="axes"><div class="axis"><h3>axis one</h3><div class="sides">'
+          '<div class="side strong"><b>Reliably gets right</b>strong side</div>'
+          '<div class="side weak"><b>Reliably misses</b>weak side</div></div></div></div>')
+    check("styles-only axis: no links block in the axes", '<div class="links">' in axes, False)
+    styles = _section(page, "Ways of working")
+    for pid in ("y1", "y2"):
+        # the style still renders in its own table, so its absence from the axes is not a pattern that went missing
+        check("styles-only axis: name %s absent from the axes, present in the styles section" % pid,
+              ("name " + pid in axes, '<th scope="row" id="%s">name %s</th>' % (pid, pid) in styles), (False, True))
+
+    doc = _axis_doc(["g2", "y1", "s2", "g1", "s1", "y2"])
+    check("fixture: mixed axis document is valid", rr.validate(doc), [])
+    page = _html(doc)
+    axes = _axes_block(page)
+    styles = _section(page, "Ways of working")
+    for pid in ("y1", "y2"):
+        check("mixed axis: %s absent from the axes, present in the styles section" % pid,
+              ("name " + pid in axes, 'href="#%s"' % pid in axes,
+               '<th scope="row" id="%s">name %s</th>' % (pid, pid) in styles), (False, False, True))
+    # written by hand: every strength and gap id the axis names, each as its own link
+    for pid in ("s1", "s2", "g1", "g2"):
+        check("mixed axis: %s linked in the axes" % pid, '<a href="#%s">name %s</a>' % (pid, pid) in axes, True)
+
+
+def _css_block(style, opener):
+    """The block that opens at opener, up to its matching closing brace, or None when opener is absent."""
+    start = style.find(opener)
+    if start < 0:
+        return None
+    depth = 0
+    for i in range(start, len(style)):
+        if style[i] == "{":
+            depth += 1
+        elif style[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return style[start:i + 1]
+    return None
+
+
+def test_axis_frame_css():
+    style = _style(_html(_doc()))
+    # written by hand from the frame an axis card takes, and the grid that stacks the cards
+    base = ".axis { border:1px solid var(--rule); border-radius:12px; padding:20px 22px 22px; }"
+    narrow = ".axis { padding:14px 14px 16px; }"
+    check("axis card frame rule", base in style, True)
+    check("axes grid rule", ".axes { display:grid; gap:20px; margin:30px 0 8px; }" in style, True)
+
+    opener = "@media (max-width:760px) {"
+    block = _css_block(style, opener)
+    # the slice must be the media block alone, or a rule after it would pass as inside it
+    check("narrow media block sliced to its closing brace",
+          (block is not None and block.startswith(opener), block is not None and block.endswith("min-width:640px; } }")),
+          (True, True))
+    check("narrower axis padding inside the narrow media block", block is not None and narrow in block, True)
+    check("narrower axis padding written once", style.count(narrow), 1)
+    # the two rules have the same specificity, so the narrow one only wins by coming later
+    base_at, narrow_at = style.find(base), style.find(narrow)
+    check("narrow axis rule after the base axis rule", (base_at >= 0, narrow_at > base_at), (True, True))
+
+
+def test_cjk_measure_rule():
+    style = _style(_html(_doc()))
+    # written by hand: the four measured selectors, narrowed to the three CJK languages, with the measure lifted
+    rule = ":is(.summary p, .axis p, figcaption, .scopeline):is(:lang(zh), :lang(ja), :lang(ko)) { max-width:none; }"
+    check("CJK measure rule present in the stylesheet", rule in style, True)
+
+    lines = [ln for ln in style.splitlines() if ln.startswith(":is(")]
+    check("one rule line opens with :is(", len(lines), 1)
+    found = re.match(r":is\(([^()]*)\):is\(((?:[^()]|\([^()]*\))*)\) \{ ([^{}]*) \}$", lines[0]) if lines else None
+    check("CJK measure rule parses as two :is() lists and one declaration", found is not None, True)
+    if found:
+        check("CJK rule selector list", found.group(1).split(", "), [".summary p", ".axis p", "figcaption", ".scopeline"])
+        check("CJK rule language list", found.group(2).split(", "), [":lang(zh)", ":lang(ja)", ":lang(ko)"])
+        check("CJK rule declaration", found.group(3), "max-width:none;")
+
+    # written by hand: each selector the CJK rule lifts keeps a base rule with a measure, which a Latin report keeps
+    for name, text in ((".summary p", ".summary p { max-width:70ch;"),
+                       (".axis p", ".axis p { margin:0 0 14px; max-width:70ch; }"),
+                       ("figcaption", "figcaption { font-size:16px; font-weight:600; line-height:1.45; margin:0 0 14px; max-width:70ch; }"),
+                       (".scopeline", ".scopeline { color:var(--muted); font-size:14px; margin:0; max-width:96ch; }")):
+        check("base measure rule kept for %s" % name, text in style, True)
+
+
+def test_document_lang_attribute():
+    doc = _doc(language="zh-TW")
+    check("fixture: zh-TW document is valid", rr.validate(doc), [])
+    page = _html(doc)
+    # the lang attribute on html is what a :lang() rule keys on
+    check("zh-TW document carries lang=zh-TW on html",
+          ('<html lang="zh-TW">' in page, 'lang="en"' in page), (True, False))
+    # the stylesheet is the same for every document, so the attribute is the only thing that differs
+    check("zh-TW document has the same stylesheet as an English one", _style(page), _style(_html(_doc())))
+
+    check("full document carries lang=en on html", '<html lang="en">' in _html(_full_doc()), True)
+    minimal = _doc()
+    check("fixture: minimal document has no language key", "language" in minimal, False)
+    check("document without a language carries lang=en on html", '<html lang="en">' in _html(minimal), True)
 
 
 # ----- section and table classes -------------------------------------------------
@@ -2501,6 +2616,7 @@ _TESTS = (test_valid_document_renders, test_validation_document, test_validation
           test_markdown_diagram_list, test_markdown_diagram_escaping, test_markdown_diagram_placement,
           test_badge_html, test_constraint_and_confidence_text, test_conditional_label_localised,
           test_evidence_depends_block, test_markdown_conditions_list, test_axis_link_split,
+          test_axis_omits_styles, test_axis_frame_css, test_cjk_measure_rule, test_document_lang_attribute,
           test_section_and_table_classes,
           test_validation_timeline_shape, test_validation_timeline_dates, test_validation_timeline_problem_order,
           test_timeline_html_full, test_timeline_thin_close_split, test_timeline_single_day, test_timeline_ai_marker,

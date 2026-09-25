@@ -28,13 +28,13 @@ The arguments are a request in the person's own words, such as "~/source/repos/o
 
 State what you read from the request in the confirmation, so a misreading is caught before anything is read.
 
-Read code **through git** only: `git log`, `git show <sha>`, `git show <sha>:<path>`, `git grep <pattern> <sha>`, `git blame <sha> -- <path>`. Leave the working tree alone, so untracked and ignored files (local settings, secrets, unfinished work) stay out of the analysis whatever the scope directory holds. In Git Bash on Windows, set `MSYS_NO_PATHCONV=1` for any command that takes `<rev>:<path>`, because the shell otherwise rewrites the argument into a Windows path.
+Read code **through git** only: `git log`, `git show <sha>`, `git show <sha>:<path>`, `git grep <pattern> <sha>`, `git blame <sha> -- <path>`. Leave the working tree alone, so untracked and ignored files (local settings, secrets, unfinished work) stay out of the analysis whatever the scope directory holds. The one exception is the instruction files step 3 names, read by name and never by listing the tree. In Git Bash on Windows, set `MSYS_NO_PATHCONV=1` for any command that takes `<rev>:<path>`, because the shell otherwise rewrites the argument into a Windows path.
 
 Confirm the repositories, the language, and the sources in one AskUserQuestion call. Say plainly what each source sends to the model:
 
 - **code**: the diffs of their commits and the code around them, the same way a file reaches the model when they ask Claude to read it;
 - **prompts**: only the text they typed, with pasted content replaced by its size, from the transcripts on this machine. Those prompts reached the model once already, when they were typed. The transcripts go back only as far as Claude Code's retention setting keeps them;
-- **instructions**: the `CLAUDE.md` in each repository, read through git, and their own user-level `~/.claude/CLAUDE.md` and `~/.claude/rules/`, which live outside git.
+- **instructions**: the `CLAUDE.md` in each repository, read through git; the instruction files in each repository that git does not track, such as a gitignored `CLAUDE.md` or `CLAUDE.local.md`, read from the working copy; and their own user-level `~/.claude/CLAUDE.md` and `~/.claude/rules/`, which live outside git.
 
 Tell what each repository is from the material rather than asking: an experiment or proof of concept usually says so in its name, its README, or its commit messages, and judge its patterns against what an experiment needs. A clone kept only for reading holds none of the person's commits, so it drops out at step 3 without being singled out.
 
@@ -74,7 +74,7 @@ python "${CLAUDE_SKILL_DIR}/scripts/extract_prompts.py" <repository> [<repositor
 
 It prints the typed prompts as text, grouped by session, with how many sessions ran inside the repositories. Read that output as it is. It leaves out earlier whoami runs, whose prompts are answers to this skill's own questions, and the copies a resumed or forked session carries of an earlier conversation. Exit status 3 means sessions were found but none held a typed prompt, which is what a change to the transcript format looks like. Say so, and carry on without prompts rather than reporting that there were none. When Python is not available, say so and stop, because the report cannot be rendered without it either.
 
-**Instructions**, when the person agreed. Read each repository's `CLAUDE.md` and `.claude/rules/` at the default branch's tip. A repository's file is often shared, so attribute its lines with `git blame` and take only the person's, dated by their commits. Blame names who committed a line, not who wrote it. A file added whole in one commit and barely changed since may have been copied from elsewhere, such as a plugin's rule books, so weigh it lower and say so in the scope. Read the user-level `~/.claude/CLAUDE.md` and `~/.claude/rules/` whole. They are the person's own, but they have no history, so they are undated.
+**Instructions**, when the person agreed. Read each repository's `CLAUDE.md` and `.claude/rules/` at the default branch's tip. A repository's file is often shared, so attribute its lines with `git blame` and take only the person's, dated by their commits. Blame names who committed a line, not who wrote it. A file added whole in one commit and barely changed since may have been copied from elsewhere, such as a plugin's rule books, so weigh it lower and say so in the scope. Then read, from each repository's working copy, the instruction files git does not track: `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md`, and `.claude/rules/*.md`, and nothing else in the working copy, since `.claude/` also holds local settings. A file kept out of git is written for the person's own sessions, so it says more about how they steer than a shared one does. Read the user-level `~/.claude/CLAUDE.md` and `~/.claude/rules/` whole. Both the untracked files and the user-level ones are the person's own, but they have no history, so they are undated.
 
 Done when you hold the changes to read, one line per group you left out saying why, the prompts or the reason there are none, and the instructions or the reason there are none.
 
@@ -130,7 +130,9 @@ Done when every pattern is in one of the four states, each with what you checked
 
 ## 6. Conclusion
 
-Read the patterns that hold, the narrowed ones, and the conditional ones together, and find what they share. The conclusion names one or two **axes** of the person's work: the kind of question they reliably get right, and the kind they reliably miss. Examples are whether a thing should exist against what happens at its boundary once it does, or the thing being built against the instrument that checks it.
+Read the patterns that hold, the narrowed ones, and the conditional ones together, and find what they share. The conclusion names an **axis** of the person's work: the kind of question they reliably get right, and the kind they reliably miss. Examples are whether a thing should exist against what happens at its boundary once it does, or the thing being built against the instrument that checks it.
+
+One axis is the default. Name a second only when its mechanism differs from the first. The test is the summary: if one sentence can state both, they are one axis, so merge them. In one trial two axes split what the summary itself called four forms of one failure, and the report read as fragmented.
 
 Each axis cites the patterns that support it, from more than one source where the sources agree. An axis is a tendency with evidence, never a type. When the patterns share nothing, say so rather than forcing an axis.
 
@@ -142,10 +144,10 @@ Done when each axis cites the patterns behind it, or the report says the pattern
 
 Write the report as one JSON document in the language from step 1, with its `language` code and every label in that language, following [`report-schema.md`](report-schema.md). Read the schema before you write the document. The reader is the person, not a reviewer of the analysis, so every field they see is in plain language: what happened, what it means, and why it matters. Identifiers such as commit SHAs, file paths, line numbers, and class names go only in an instance's `ref`, which the HTML keeps inside the collapsed evidence.
 
-- **Summary**: several sentences a reader can take in without the tables, then the axes, each with a description of what it is about.
-- **Diagrams**: add one wherever a shape explains better than a sentence, such as how a kind of defect gets found or missed, or how the axes relate. Give it as structure, steps in lanes as the schema describes, never as text drawn into boxes. One idea per diagram, and a comparison as lanes side by side in one diagram.
+- **Summary**: several sentences a reader can take in without the tables, then the axis, with a description of what it is about, and a second one only when step 6 found one.
+- **Diagrams**: add one wherever a shape explains better than a sentence, such as how a kind of defect gets found or missed, or how the axis plays out. Give it as structure, steps in lanes as the schema describes, never as text drawn into boxes. One idea per diagram, and a comparison as lanes side by side in one diagram. Each diagram shows an axis or a pattern from the report, never a dimension the conclusion does not name.
 - **Strengths, gaps, and styles**: each pattern that holds or narrowed, stated in its narrowed form. Its confidence is `verified`, or `depends` with the constraint for a conditional one. Describe a code pattern as what shipped under the person's name, not as what they typed.
-- **Implications**: what the axes mean for how the person works. Say where a strength is leverage, where a gap will recur, and what their standing rules do not yet cover. Stay at the level of the pattern. How to fix a particular piece of code is not this report's subject.
+- **Implications**: what the axis means for how the person works. Say where a strength is leverage, where a gap will recur, and what their standing rules do not yet cover. Stay at the level of the pattern. How to fix a particular piece of code is not this report's subject.
 - **Timeline**: the dates behind the scope, taken from what you read rather than estimated. For each repository, the dates of the oldest and newest changes read, from `git log`, and the date AI shows up. For the sample, the date where the newest changes begin. For the prompts, the first and last timestamps `extract_prompts.py` returned.
 - **Scope**: the repositories and where AI shows up in each, the identities, how many changes were read from the recent past and from the older history and the dates each covers, how many sessions and rules were read, the dates the prompts span, and what was left out and why.
 - **Dissolved** candidates and single **events** go in the appendix, which the HTML keeps collapsed.

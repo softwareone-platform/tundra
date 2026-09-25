@@ -36,11 +36,11 @@ It assesses the person running it. The material it reads and the context it asks
 
 ## What it reads and what it sends
 
-**Code** is read through git only: the history, the diffs of your commits, and the code around them at each commit. It never reads your working tree, so untracked and ignored files such as local settings and secrets stay out of the analysis.
+**Code** is read through git only: the history, the diffs of your commits, and the code around them at each commit. It never reads code from your working tree, so untracked and ignored files such as local settings and secrets stay out of the analysis. The only files it reads from the working tree are the instruction files named below.
 
 **Prompts** are read from the Claude Code transcripts on this machine, under `~/.claude/projects`, and only from sessions whose working directory was inside the repositories you chose. Only the text you typed is taken. Model output, tool output, skill content, summaries, and messages from other sessions are all left out, as are the copies a resumed session keeps of earlier prompts, and pasted content is replaced by its size. The transcripts go back as far as Claude Code's `cleanupPeriodDays` setting keeps them, 30 days by default. The transcript format is not documented. If it changes, whoami says so rather than reporting that you gave no prompts.
 
-**Instructions** are each repository's `CLAUDE.md` and `.claude/rules/`, read through git, with only the lines you wrote taken from a shared file, and your user-level `~/.claude/CLAUDE.md` and `~/.claude/rules/`.
+**Instructions** are each repository's `CLAUDE.md` and `.claude/rules/`, read through git, with only the lines you wrote taken from a shared file; the instruction files git does not track, such as a gitignored `CLAUDE.md` or `CLAUDE.local.md`, read by name from your working copy and nothing else beside them; and your user-level `~/.claude/CLAUDE.md` and `~/.claude/rules/`.
 
 What it reads goes to the model, the same way a file does when you ask Claude to read it. Your prompts reached the model once already, when you typed them. Give it only the repositories you would open in Claude anyway. The scope is only what you pass it, and with no argument it is the repository you are in.
 
