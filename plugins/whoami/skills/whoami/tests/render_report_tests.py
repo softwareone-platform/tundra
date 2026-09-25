@@ -1495,8 +1495,9 @@ def test_cjk_measure_rule():
     rule = ":is(.summary p, .axis p, figcaption, .scopeline):is(:lang(zh), :lang(ja), :lang(ko)) { max-width:none; }"
     check("CJK measure rule present in the stylesheet", rule in style, True)
 
-    lines = [ln for ln in style.splitlines() if ln.startswith(":is(")]
-    check("one rule line opens with :is(", len(lines), 1)
+    # found by what it holds rather than how it starts, so another :is() rule cannot stand in for it
+    lines = [ln for ln in style.splitlines() if ":lang(" in ln]
+    check("one rule line holds :lang(", len(lines), 1)
     found = re.match(r":is\(([^()]*)\):is\(((?:[^()]|\([^()]*\))*)\) \{ ([^{}]*) \}$", lines[0]) if lines else None
     check("CJK measure rule parses as two :is() lists and one declaration", found is not None, True)
     if found:
