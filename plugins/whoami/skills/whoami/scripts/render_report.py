@@ -407,11 +407,16 @@ body { margin:0; background:var(--paper); color:var(--ink);
   font:16px/1.7 "Segoe UI Variable Text","Segoe UI",-apple-system,"PingFang TC","Microsoft JhengHei","Noto Sans CJK TC",sans-serif; }
 main { max-width:1080px; margin:32px auto; padding:44px 52px 56px; background:var(--sheet); border-radius:12px; }
 h1 { font:400 34px/1.25 "Iowan Old Style","Palatino Linotype","Book Antiqua",Georgia,"Noto Serif CJK TC","Songti TC",serif; margin:0 0 10px; letter-spacing:-.01em; }
-.scopeline { color:var(--muted); font-size:14px; margin:0; max-width:96ch; }
+.scopeline { color:var(--muted); font-size:14px; margin:0; }
 h1, .scopeline { overflow-wrap:anywhere; }
-section { margin-top:40px; padding-top:28px; border-top:1px solid var(--rule); }
-section > h2 { display:flex; align-items:center; gap:10px; margin:0 0 18px; font-size:21px; font-weight:600; line-height:1.3; }
-section > h2::before { content:""; flex:none; width:24px; height:24px; background:var(--muted);
+/* each block of content is a card, and the text inside fills it,
+   because a line held short of the card's edge read as broken there */
+section, .lead, .axis, figure.flow { border:1px solid var(--rule); border-radius:12px; padding:24px 28px 28px; }
+section { margin-top:24px; }
+/* the summary is a run of cards rather than one, so nothing is framed twice, and its rule sets the header apart */
+section.summary { margin-top:36px; padding:32px 0 0; border:0; border-top:1px solid var(--rule); border-radius:0; }
+section > h2, .lead > h2 { display:flex; align-items:center; gap:10px; margin:0 0 18px; font-size:21px; font-weight:600; line-height:1.3; }
+section > h2::before, .lead > h2::before { content:""; flex:none; width:24px; height:24px; background:var(--muted);
   -webkit-mask:var(--icon) center/contain no-repeat; mask:var(--icon) center/contain no-repeat; }
 section.strengths > h2::before { background:var(--right); } section.gaps > h2::before { background:var(--miss); }
 section.summary { --icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Ccircle cx='12' cy='12' r='4.5'/%3E%3Ccircle cx='12' cy='12' r='0.8'/%3E%3C/svg%3E"); }
@@ -421,13 +426,11 @@ section.styles { --icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 section.implications { --icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M8 12h8M13 8.5l3.5 3.5-3.5 3.5'/%3E%3C/svg%3E"); }
 section.scope { --icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='M15.5 15.5L20 20'/%3E%3C/svg%3E"); }
 section.appendix { --icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='5' rx='1'/%3E%3Cpath d='M5 9v10h14V9M10 13h4'/%3E%3C/svg%3E"); }
-.summary p { max-width:70ch; margin:0 0 14px; font-size:17px; }
+.summary p { margin:0 0 14px; font-size:17px; } .lead p:last-child { margin-bottom:0; }
 h3 { font:400 23px/1.35 "Iowan Old Style","Palatino Linotype","Book Antiqua",Georgia,"Noto Serif CJK TC","Songti TC",serif; margin:0 0 6px; }
 h4 { margin:14px 0 4px; font-size:13px; font-weight:600; color:var(--muted); }
-.axes { display:grid; gap:20px; margin:30px 0 8px; }
-/* a frame keeps an axis's name, description and two sides together, which a second axis made hard to see */
-.axis { border:1px solid var(--rule); border-radius:12px; padding:20px 22px 22px; }
-.axis p { margin:0 0 14px; max-width:70ch; }
+.axes { display:grid; gap:20px; margin:20px 0 0; }
+.axis p { margin:0 0 14px; }
 .sides { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
 .side { border-radius:10px; padding:14px 18px 16px; }
 .side.strong { background:var(--right-wash); } .side.weak { background:var(--miss-wash); }
@@ -436,11 +439,8 @@ h4 { margin:14px 0 4px; font-size:13px; font-weight:600; color:var(--muted); }
 .axis .links { margin-top:12px; font-size:13px; line-height:1.8; }
 .axis .links h4 { margin:0 0 2px; }
 .side .links { padding-top:10px; border-top:1px solid color-mix(in srgb, currentColor 22%, transparent); }
-figure { margin:36px 0 0; }
-figcaption { font-size:16px; font-weight:600; line-height:1.45; margin:0 0 14px; max-width:70ch; }
-/* the measure is in ch, the width of a Latin digit, and a CJK character takes about two,
-   so a CJK report fills the column where a Latin one keeps its line length */
-:is(.summary p, .axis p, figcaption, .scopeline):is(:lang(zh), :lang(ja), :lang(ko)) { max-width:none; }
+figure { margin:0; } figure.flow { margin:20px 0 0; }
+figcaption { font-size:16px; font-weight:600; line-height:1.45; margin:0 0 14px; }
 .lanes { display:grid; gap:24px; } .lanes.n2 { grid-template-columns:1fr 1fr; } .lanes.n3 { grid-template-columns:1fr 1fr 1fr; }
 .lane { display:flex; flex-direction:column; align-items:stretch; }
 .lane-title { font-weight:600; font-size:14px; margin-bottom:8px; color:var(--muted); }
@@ -457,6 +457,8 @@ table { width:100%; border-collapse:collapse; font-size:15px; table-layout:fixed
 th, td { text-align:left; vertical-align:top; padding:12px 14px 12px 0; border-bottom:1px solid var(--rule); overflow-wrap:anywhere; }
 thead th { font-size:13px; font-weight:600; color:var(--muted); padding-top:0; }
 tbody th { font-weight:600; }
+/* the card's own border closes the table, so a rule under the last row would draw the edge twice */
+tbody tr:last-child > th, tbody tr:last-child > td { border-bottom:0; padding-bottom:0; }
 table.patterns thead th:nth-child(1) { width:24%; } table.patterns thead th:nth-last-child(2) { width:11%; } table.patterns thead th:last-child { width:13%; }
 table.styles thead th:nth-child(1) { width:18%; } table.styles thead th:nth-child(3), table.styles thead th:nth-child(4) { width:17%; }
 table.implications thead th:nth-child(1) { width:24%; } table.implications thead th:nth-child(3) { width:30%; }
@@ -506,7 +508,8 @@ figure.timeline { margin:24px 0 0; font-size:13px; color:var(--muted); }
 @media (max-width:900px) { .sides, .lanes.n2, .lanes.n3 { grid-template-columns:1fr; } }
 @media (max-width:560px) { .tl-row { grid-template-columns:1fr; gap:2px; margin-bottom:6px; } .tl-axis .tl-name { display:none; }
   .tl-legend { margin-left:0; } .tl-tick.minor { display:none; } }
-@media (max-width:760px) { main { margin:0; padding:28px 16px 48px; border-radius:0; } .axis { padding:14px 14px 16px; }
+@media (max-width:760px) { main { margin:0; padding:28px 16px 48px; border-radius:0; }
+  section, .lead, .axis, figure.flow { padding:16px 14px 18px; } section.summary { padding:24px 0 0; }
   .tablewrap { overflow-x:auto; } table.patterns, table.implications { min-width:640px; } }
 """
 
@@ -520,8 +523,9 @@ def render_html(doc, lab):
     if doc.get("timeline"):
         body.append(timeline_html(doc["timeline"], lab))
 
-    body.append('<section class="summary"><h2>%s</h2>' % esc(lab["summary"]))
-    body += ["<p>%s</p>" % esc(par) for par in str(summary["text"]).split("\n\n")]
+    # the heading and the summary text form the first card, and the axes and diagrams follow as cards of their own
+    body.append('<section class="summary"><div class="lead"><h2>%s</h2>%s</div>' % (
+        esc(lab["summary"]), "".join("<p>%s</p>" % esc(par) for par in str(summary["text"]).split("\n\n"))))
     groups = {p["id"]: g for g in ("strengths", "gaps", "styles") for p in doc.get(g, [])}
     axes = []
     for axis in summary.get("axes", []):

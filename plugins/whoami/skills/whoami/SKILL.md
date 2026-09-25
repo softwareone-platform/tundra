@@ -152,7 +152,7 @@ Write the report as one JSON document in the language from step 1, with its `lan
 - **Scope**: the repositories and where AI shows up in each, the identities, how many changes were read from the recent past and from the older history and the dates each covers, how many sessions and rules were read, the dates the prompts span, and what was left out and why.
 - **Dissolved** candidates and single **events** go in the appendix, which the HTML keeps collapsed.
 
-Write the document to `${CLAUDE_PLUGIN_DATA}/reports/<date>-<scope>.json`, then render it:
+Write the document to `${CLAUDE_PLUGIN_DATA}/reports/<date>-<scope>.json`. When a report of that name already exists, from an earlier run the same day, add `-2`, `-3`, and so on before the extension rather than replacing it, so both runs can be compared. Then render it:
 
 ```
 python "${CLAUDE_SKILL_DIR}/scripts/render_report.py" <document.json> --out <same path, .html>

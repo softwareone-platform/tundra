@@ -1023,7 +1023,7 @@ def test_diagram_html_placement():
     second = _diagram([_lane([_step("second")])], caption="two")
     check("several diagrams in document order inside the summary",
           _section(_html(_doc(diagrams=[first, second])), "Summary"),
-          "<h2>Summary</h2><p>the summary</p>" + _one_step_figure("first", "one") + _one_step_figure("second", "two"))
+          "<h2>Summary</h2><p>the summary</p></div>" + _one_step_figure("first", "one") + _one_step_figure("second", "two"))
 
 
 def test_diagram_css():
@@ -1470,11 +1470,12 @@ def _css_block(style, opener):
 
 def test_axis_frame_css():
     style = _style(_html(_doc()))
-    # written by hand from the frame an axis card takes, and the grid that stacks the cards
-    base = ".axis { border:1px solid var(--rule); border-radius:12px; padding:20px 22px 22px; }"
-    narrow = ".axis { padding:14px 14px 16px; }"
-    check("axis card frame rule", base in style, True)
-    check("axes grid rule", ".axes { display:grid; gap:20px; margin:30px 0 8px; }" in style, True)
+    # written by hand from the frame every card takes, the axis among them, and the grid that stacks the axis cards
+    base = "section, .lead, .axis, figure.flow { border:1px solid var(--rule); border-radius:12px; padding:24px 28px 28px; }"
+    narrow = "section, .lead, .axis, figure.flow { padding:16px 14px 18px; }"
+    narrow_summary = "section.summary { padding:24px 0 0; }"
+    check("shared card frame rule", base in style, True)
+    check("axes grid rule", ".axes { display:grid; gap:20px; margin:20px 0 0; }" in style, True)
 
     opener = "@media (max-width:760px) {"
     block = _css_block(style, opener)
@@ -1482,42 +1483,46 @@ def test_axis_frame_css():
     check("narrow media block sliced to its closing brace",
           (block is not None and block.startswith(opener), block is not None and block.endswith("min-width:640px; } }")),
           (True, True))
-    check("narrower axis padding inside the narrow media block", block is not None and narrow in block, True)
-    check("narrower axis padding written once", style.count(narrow), 1)
+    check("narrower card padding inside the narrow media block", block is not None and narrow in block, True)
+    check("narrower card padding written once", style.count(narrow), 1)
     # the two rules have the same specificity, so the narrow one only wins by coming later
     base_at, narrow_at = style.find(base), style.find(narrow)
-    check("narrow axis rule after the base axis rule", (base_at >= 0, narrow_at > base_at), (True, True))
+    check("narrow card rule after the base card rule", (base_at >= 0, narrow_at > base_at), (True, True))
+
+    # the base summary rule outranks the shared narrow selector, so this is the rule that shrinks the summary,
+    # and it wins over the base summary rule only by coming later
+    check("narrower summary padding inside the narrow media block", block is not None and narrow_summary in block, True)
+    summary_at, narrow_summary_at = style.find("section.summary {"), style.find(narrow_summary)
+    check("narrow summary rule after the base summary rule", (summary_at >= 0, narrow_summary_at > summary_at),
+          (True, True))
 
 
-def test_cjk_measure_rule():
-    style = _style(_html(_doc()))
-    # written by hand: the four measured selectors, narrowed to the three CJK languages, with the measure lifted
-    rule = ":is(.summary p, .axis p, figcaption, .scopeline):is(:lang(zh), :lang(ja), :lang(ko)) { max-width:none; }"
-    check("CJK measure rule present in the stylesheet", rule in style, True)
+def test_no_line_measure():
+    # a comment can name a selector or a declaration, so comments are split off before the rules are read
+    css = re.sub(r"/\*.*?\*/", "", _style(_html(_doc())), flags=re.S)
+    # only innermost blocks match, so a rule inside a media query is read as its own selector and declarations
+    rules = [(sel.strip(), decl) for sel, decl in re.findall(r"([^{}]*)\{([^{}]*)\}", css)]
+    names = (".summary p", ".axis p", "figcaption", ".scopeline")
+    check("every text selector found by the rule parse", [any(n in sel for sel, _ in rules) for n in names],
+          [True] * len(names))
+    # checked rule by rule, because main keeps a max-width and the media queries name one
+    check("no rule for the text selectors declares max-width",
+          [sel for sel, decl in rules if any(n in sel for n in names) and "max-width" in decl], [])
+    check("no rule keys on :lang(", ":lang(" in css, False)
 
-    # found by what it holds rather than how it starts, so another :is() rule cannot stand in for it
-    lines = [ln for ln in style.splitlines() if ":lang(" in ln]
-    check("one rule line holds :lang(", len(lines), 1)
-    found = re.match(r":is\(([^()]*)\):is\(((?:[^()]|\([^()]*\))*)\) \{ ([^{}]*) \}$", lines[0]) if lines else None
-    check("CJK measure rule parses as two :is() lists and one declaration", found is not None, True)
-    if found:
-        check("CJK rule selector list", found.group(1).split(", "), [".summary p", ".axis p", "figcaption", ".scopeline"])
-        check("CJK rule language list", found.group(2).split(", "), [":lang(zh)", ":lang(ja)", ":lang(ko)"])
-        check("CJK rule declaration", found.group(3), "max-width:none;")
-
-    # written by hand: each selector the CJK rule lifts keeps a base rule with a measure, which a Latin report keeps
-    for name, text in ((".summary p", ".summary p { max-width:70ch;"),
-                       (".axis p", ".axis p { margin:0 0 14px; max-width:70ch; }"),
-                       ("figcaption", "figcaption { font-size:16px; font-weight:600; line-height:1.45; margin:0 0 14px; max-width:70ch; }"),
-                       (".scopeline", ".scopeline { color:var(--muted); font-size:14px; margin:0; max-width:96ch; }")):
-        check("base measure rule kept for %s" % name, text in style, True)
+    # written by hand: each text selector keeps its rule, with no measure in it
+    for name, text in ((".summary p", ".summary p { margin:0 0 14px; font-size:17px; }"),
+                       (".axis p", ".axis p { margin:0 0 14px; }"),
+                       ("figcaption", "figcaption { font-size:16px; font-weight:600; line-height:1.45; margin:0 0 14px; }"),
+                       (".scopeline", ".scopeline { color:var(--muted); font-size:14px; margin:0; }")):
+        check("rule without a measure kept for %s" % name, text in css, True)
 
 
 def test_document_lang_attribute():
     doc = _doc(language="zh-TW")
     check("fixture: zh-TW document is valid", rr.validate(doc), [])
     page = _html(doc)
-    # the lang attribute on html is what a :lang() rule keys on
+    # the browser reads the lang attribute on html to choose the fonts the text is drawn in
     check("zh-TW document carries lang=zh-TW on html",
           ('<html lang="zh-TW">' in page, 'lang="en"' in page), (True, False))
     # the stylesheet is the same for every document, so the attribute is the only thing that differs
@@ -1540,8 +1545,9 @@ def test_section_and_table_classes():
     for cls, heading in (("summary", "Summary"), ("strengths", "Strengths"), ("gaps", "Gaps"),
                          ("styles", "Ways of working"), ("implications", "What this means for your work"),
                          ("scope", "Scope"), ("appendix", "Appendix")):
-        check("%s class on the section of its heading" % cls, '<section class="%s"><h2>%s</h2>' % (cls, heading) in page,
-              True)
+        # the summary's heading opens its lead card, so the heading does not follow the section tag directly
+        opener = '<section class="summary"><div class="lead">' if cls == "summary" else '<section class="%s">' % cls
+        check("%s class on the section of its heading" % cls, '%s<h2>%s</h2>' % (opener, heading) in page, True)
     # written by hand: the three pattern tables, then the implications and the scope tables
     tables = re.findall(r'<table class="([^"]*)">', page)
     check("each table carries its class", tables, ["patterns", "patterns", "patterns styles", "implications", "scope"])
@@ -1558,6 +1564,86 @@ def test_section_and_table_classes():
         check("icon rule for section.%s" % cls, ('section.%s { --icon:url("data:' % cls) in style, True)
     for cls in sorted(set(" ".join(tables).split())):
         check("column rule for table.%s" % cls, ("table.%s " % cls) in style, True)
+
+
+# ----- cards and the lead --------------------------------------------------------
+
+def test_card_rules_and_elements():
+    page = _html(_full_doc())
+    style = _style(page)
+    check("sections keep their own top margin", "section { margin-top:24px; }" in style, True)
+    # a card selector no rendered element matches would frame nothing, so each one is found in the page
+    check("each card selector matches an element of the full page",
+          ("<section" in page, '<div class="lead">' in page, '<div class="axis">' in page,
+           '<figure class="flow">' in page),
+          (True, True, True, True))
+
+
+def test_summary_not_a_card():
+    style = _style(_html(_doc()))
+    # written by hand: the summary drops the card frame and keeps only a top rule
+    summary = ("section.summary { margin-top:36px; padding:32px 0 0; border:0; "
+               "border-top:1px solid var(--rule); border-radius:0; }")
+    check("base summary rule unframes the section", summary in style, True)
+    # specificity already lets it win, and coming later keeps it winning if the selector is ever loosened
+    shared_at, summary_at = style.find("section, .lead, .axis, figure.flow { border:"), style.find(summary)
+    check("base summary rule after the shared card rule", (shared_at >= 0, summary_at > shared_at), (True, True))
+
+
+def test_lead_wrapper():
+    page = _html(_full_doc())
+    check("one lead on the page", page.count('<div class="lead">'), 1)
+    check("summary section opens with the lead and its heading",
+          page[page.index('<section class="summary">'):].startswith('<section class="summary"><div class="lead"><h2>'),
+          True)
+    start = page.index('<div class="lead">')
+    # the lead holds no nested div, so its first closing tag is its own
+    end = page.index("</div>", start)
+    # written by hand: the heading and the two paragraphs of the full document's summary text, and nothing else
+    check("lead holds the heading and the summary text only", page[start:end],
+          '<div class="lead"><h2>Summary</h2><p>first paragraph</p><p>second paragraph</p>')
+    # the axes and the figures are cards of their own, so they must follow the lead rather than sit in it
+    check("lead closes before the axes block", page[end:].startswith('</div><div class="axes">'), True)
+    check("figure after the lead closes", page.index('<figure class="flow">') > end, True)
+    check("last lead paragraph drops its bottom margin", ".lead p:last-child { margin-bottom:0; }" in _style(page), True)
+
+    doc = _doc()
+    check("fixture: minimal document has no axes and no diagrams",
+          ("axes" in doc["summary"], "diagrams" in doc), (False, False))
+    # written by hand: the minimal summary text, with the lead closed and the section closed straight after it
+    check("text-only summary still wrapped in the lead",
+          '<section class="summary"><div class="lead"><h2>Summary</h2><p>the summary</p></div></section>' in _html(doc),
+          True)
+
+
+def test_last_row_table_rule():
+    style = _style(_html(_doc()))
+    # written by hand: the last row gives up the rule and the padding the card's own border replaces
+    rule = "tbody tr:last-child > th, tbody tr:last-child > td { border-bottom:0; padding-bottom:0; }"
+    check("last-row rule written once", style.count(rule), 1)
+    # both rules have the same declarations to fight over, so the last-row one must come later to win
+    base_at, rule_at = style.find("\nth, td {"), style.find(rule)
+    check("last-row rule after the base cell rule", (base_at >= 0, rule_at > base_at), (True, True))
+
+
+def test_heading_rules_reach_lead():
+    page = _html(_full_doc())
+    style = _style(page)
+    # written by hand: the heading layout and its icon each name the lead's heading next to a section's
+    check("heading layout rule names the lead heading", "section > h2, .lead > h2 { display:flex;" in style, True)
+    check("heading icon rule names the lead heading", 'section > h2::before, .lead > h2::before { content:"";' in style,
+          True)
+    # the summary heading sits in the lead, so a section-only selector would leave it bare
+    check("summary heading is a child of the lead, not of its section",
+          ('<div class="lead"><h2>Summary</h2>' in page, '<section class="summary"><h2>' in page), (True, False))
+
+
+def test_figure_margins():
+    style = _style(_html(_doc()))
+    # written by hand: the bare figure margin, then the flow figure's own
+    check("figure base and flow margins", "figure { margin:0; } figure.flow { margin:20px 0 0; }" in style, True)
+    # the class selector outranks the bare figure rule, so the timeline keeps its margin
+    check("timeline figure keeps its margin", "figure.timeline { margin:24px 0 0;" in style, True)
 
 
 # ----- timeline ------------------------------------------------------------------
@@ -2617,8 +2703,10 @@ _TESTS = (test_valid_document_renders, test_validation_document, test_validation
           test_markdown_diagram_list, test_markdown_diagram_escaping, test_markdown_diagram_placement,
           test_badge_html, test_constraint_and_confidence_text, test_conditional_label_localised,
           test_evidence_depends_block, test_markdown_conditions_list, test_axis_link_split,
-          test_axis_omits_styles, test_axis_frame_css, test_cjk_measure_rule, test_document_lang_attribute,
+          test_axis_omits_styles, test_axis_frame_css, test_no_line_measure, test_document_lang_attribute,
           test_section_and_table_classes,
+          test_card_rules_and_elements, test_summary_not_a_card, test_lead_wrapper, test_last_row_table_rule,
+          test_heading_rules_reach_lead, test_figure_margins,
           test_validation_timeline_shape, test_validation_timeline_dates, test_validation_timeline_problem_order,
           test_timeline_html_full, test_timeline_thin_close_split, test_timeline_single_day, test_timeline_ai_marker,
           test_timeline_prompts_row, test_timeline_legend, test_timeline_tick_steps, test_timeline_tick_edges_and_minor,
