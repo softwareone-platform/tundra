@@ -14,7 +14,7 @@
         "url": "https://github.com/softwareone-platform/issue-to-pr.git",
         "path": "plugins/issue-to-pr-pipeline",
         "ref": "main",
-        "sha": "af7140b526003a9b72d73c40307eda297bd32d55"
+        "sha": "54399f8bc58f7f2139cc6ca676df0d74980eafae"
       }
     },
     {
@@ -25,7 +25,7 @@
         "url": "https://github.com/softwareone-platform/issue-to-pr.git",
         "path": "plugins/disconfirm-first",
         "ref": "main",
-        "sha": "af7140b526003a9b72d73c40307eda297bd32d55"
+        "sha": "54399f8bc58f7f2139cc6ca676df0d74980eafae"
       }
     },
     {
@@ -36,7 +36,7 @@
         "url": "https://github.com/softwareone-platform/issue-to-pr.git",
         "path": "plugins/test-authoring",
         "ref": "main",
-        "sha": "af7140b526003a9b72d73c40307eda297bd32d55"
+        "sha": "54399f8bc58f7f2139cc6ca676df0d74980eafae"
       }
     },
     {
@@ -47,7 +47,7 @@
         "url": "https://github.com/softwareone-platform/issue-to-pr.git",
         "path": "plugins/pr-lifecycle",
         "ref": "main",
-        "sha": "af7140b526003a9b72d73c40307eda297bd32d55"
+        "sha": "54399f8bc58f7f2139cc6ca676df0d74980eafae"
       }
     },
     {
