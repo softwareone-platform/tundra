@@ -2395,8 +2395,8 @@ def _theme_colours(theme):
     return dict(re.findall(r"--([\w-]+):(#[0-9a-f]{6});", theme))
 
 
-# the WCAG 2 arithmetic is written out here rather than taken from the renderer,
-# so a mistake in one cannot hide the same mistake in the other
+# the renderer computes no contrast, so the WCAG 2 arithmetic lives here,
+# and the known answers in test_theme_contrast check it against published figures
 def _luminance(hex_colour):
     def linear(byte):
         c = byte / 255
