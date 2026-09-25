@@ -1,6 +1,6 @@
 # whoami
 
-A self-assessment built from what you produced: the code that shipped under your name, whether you typed it or directed a model to, the prompts you gave Claude, and the instructions you left it in `CLAUDE.md`. It finds the patterns that recur, tests each one against what could explain it away, and concludes what they say about how you work: the kind of question you reliably get right, and the kind you reliably miss. Every pattern in the report comes with the commits, prompts, or rules it came from, and a strength comes with the places you did not do it. It gives no type, score, or rating.
+A self-assessment built from what you produced: the code that shipped under your name, whether you typed it or directed a model to, the prompts you gave Claude, and the instructions you left it in `CLAUDE.md`. It finds the patterns that recur, tests each one against what could explain it away, and concludes what they say about how you work: the kind of question you reliably get right, and the kind you reliably miss. Every pattern in the report comes with the commits, prompts, or rules it came from. A strength also lists its exceptions, the changes of yours where you did not do the thing it credits you with, so no strength reads as more consistent than your work was. It gives no type, score, or rating.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/report-overview-dark.png">
