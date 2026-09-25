@@ -264,6 +264,7 @@ def validate_timeline(timeline):
         start, end = day(obj, "from", where), day(obj, "to", where)
         if start and end and start > end:
             problems.append("%s: 'from' is after 'to'" % where)
+        return start, end
 
     if not isinstance(timeline, dict):
         return ["'timeline' is not an object"]
@@ -278,9 +279,15 @@ def validate_timeline(timeline):
             continue
         if not isinstance(repo.get("name"), str) or not repo["name"]:
             problems.append("%s: 'name' is missing or empty" % where)
-        span(repo, where)
+        start, end = span(repo, where)
         day(repo, "ai_from", where, required=False)
-    day(timeline, "recent_from", "timeline", required=False)
+        recent = day(repo, "recent_from", where, required=False)
+        # the newest changes are read closely from recent_from on, so it is the date of one of the changes read
+        if recent and start and end and start <= end and not start <= recent <= end:
+            problems.append("%s: 'recent_from' is outside 'from' to 'to'" % where)
+    # each repository samples its own history, so a single date would cut every row at a boundary only one of them has
+    if timeline.get("recent_from") is not None:
+        problems.append("timeline: 'recent_from' belongs on each repository")
     prompts = timeline.get("prompts")
     if prompts is not None:
         if isinstance(prompts, dict):
@@ -586,7 +593,6 @@ def theme_switch(lab):
 def timeline_html(timeline, lab):
     day = datetime.date.fromisoformat
     repositories = timeline["repositories"]
-    recent = day(timeline["recent_from"]) if timeline.get("recent_from") else None
     prompts = timeline.get("prompts")
     dates = [day(r[k]) for r in repositories for k in ("from", "to", "ai_from") if r.get(k)]
     if prompts:
@@ -605,6 +611,7 @@ def timeline_html(timeline, lab):
     rows, kinds = [], set()
     for r in repositories:
         start, end = day(r["from"]), day(r["to"])
+        recent = day(r["recent_from"]) if r.get("recent_from") else None
         parts = []
         # the older changes are a thin sample spread across the history, so they are drawn apart from the newest,
         # which were all read, rather than as one bar that claims the whole span was read alike

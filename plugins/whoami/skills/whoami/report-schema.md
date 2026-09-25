@@ -10,9 +10,8 @@ The report is one JSON document, written in the person's language, which `script
   "title": "whoami: acme-orders",
   "scope_line": "one line: the repositories, how much was read, and where AI involvement shows",
   "timeline": {
-    "recent_from": "2026-03-02",
     "repositories": [
-      { "name": "acme-orders", "from": "2024-11-04", "to": "2026-09-20", "ai_from": "2026-02-10" }
+      { "name": "acme-orders", "from": "2024-11-04", "to": "2026-09-20", "ai_from": "2026-02-10", "recent_from": "2026-06-15" }
     ],
     "prompts": { "from": "2026-08-25", "to": "2026-09-24" }
   },
@@ -74,7 +73,7 @@ A `PATTERN` is:
 }
 ```
 
-- The **timeline** is drawn under the scope line, above the conclusion, so the reader sees what the conclusion rests on before reading it. Every date is written `YYYY-MM-DD` and is one you measured, never an estimate. A repository's `from` and `to` are the dates of the oldest and newest of its changes you read. `recent_from` is the date of the oldest of the newest changes you read closely, and the changes before it are drawn as the thinner sample; leave it out when you read every change. `ai_from` is the date of the earliest evidence that AI took part, left out when there is none. `prompts` spans the first and last prompt you read, left out when you read none. The timeline is optional, and the Markdown summary leaves it to the scope line.
+- The **timeline** is drawn under the scope line, above the conclusion, so the reader sees what the conclusion rests on before reading it. Every date is written `YYYY-MM-DD` and is one you measured, never an estimate. A repository's `from` and `to` are the dates of the oldest and newest of its changes you read. A repository's `recent_from` is the date of the oldest of its newest changes, the ones you read closely, and its changes before that date are drawn as the thinner sample. Each repository has its own, because each is sampled on its own. Leave it out for a repository whose changes you read every one of. The renderer rejects a `recent_from` outside the repository's `from` and `to`, and one given for the whole timeline. `ai_from` is the date of the earliest evidence that AI took part, left out when there is none. `prompts` spans the first and last prompt you read, left out when you read none. The timeline is optional, and the Markdown summary leaves it to the scope line.
 - A **diagram** is structure, never text drawn as boxes: a text-drawn box misaligns as soon as it holds CJK characters. Each lane is a flow read top to bottom, one step per box, with an arrow between consecutive steps. Put a comparison in two or three lanes of one diagram, which sit side by side, rather than in separate diagrams. A step's `tone` is `neutral`, `strong` for what the person reliably gets right, or `weak` for what they reliably miss, and it takes the same colours as the axes. Every diagram needs a `caption`, which the HTML and the Markdown summary both show as the diagram's title above it, every lane of a diagram with more than one lane needs a `title`, and a diagram holds at most three lanes: the Markdown summary lists each lane as a numbered list, and only a caption or a title keeps one list from running into the next. `detail` is a list of text. A `note` on a lane's last step has no arrow to label and is not shown.
 - `strengths`, `gaps`, and `styles` are separate lists. A **style** is a way of working that is neither a strength nor a gap: a trade-off, stated with what it `gives` and what it `costs`.
 - A pattern that narrowed is stated in its narrowed form, with `verified` confidence.

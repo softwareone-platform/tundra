@@ -1663,8 +1663,8 @@ def _timeline(*repositories, **extra):
 def _tl_full():
     """A timeline with every part over 2026-01-01 to 2026-04-11, which is exactly 100 days,
     so a day's offset from the first date is its position in percent."""
-    return _timeline(_tl_repo("repo-a", "2026-01-01", "2026-04-11", ai_from="2026-01-21"),
-                     recent_from="2026-03-02", prompts={"from": "2026-03-22", "to": "2026-04-11"})
+    return _timeline(_tl_repo("repo-a", "2026-01-01", "2026-04-11", ai_from="2026-01-21", recent_from="2026-03-02"),
+                     prompts={"from": "2026-03-22", "to": "2026-04-11"})
 
 
 def _tl_html(timeline, labels=None):
@@ -1784,12 +1784,29 @@ def test_validation_timeline_dates():
                  where + ": 'ai_from' is not a date written YYYY-MM-DD")
 
     check("no recent_from valid", rr.validate(_doc(timeline=_timeline(repo))), [])
-    # recent_from may fall outside every repository, which reads as every change read closely or thinly
-    check("recent_from outside every span valid",
-          rr.validate(_doc(timeline=_timeline(repo, recent_from="2025-12-01"))), [])
+    # recent_from is the date of one of the repository's own changes, so a day before its span cannot be one
+    _invalid("recent_from before from", _doc(timeline=_timeline(dict(repo, recent_from="2025-12-01"))),
+             where + ": 'recent_from' is outside 'from' to 'to'")
+    _invalid("recent_from after to", _doc(timeline=_timeline(dict(repo, recent_from="2026-05-01"))),
+             where + ": 'recent_from' is outside 'from' to 'to'")
+    # the span's own ends are dates of changes read, so both bounds are inclusive
+    check("recent_from equal to from valid", rr.validate(_doc(timeline=_timeline(dict(repo, recent_from="2026-01-01")))), [])
+    check("recent_from equal to to valid", rr.validate(_doc(timeline=_timeline(dict(repo, recent_from="2026-04-11")))), [])
+    check("null recent_from valid", rr.validate(_doc(timeline=_timeline(dict(repo, recent_from=None)))), [])
     for value in bad:
-        _invalid("recent_from %r" % (value,), _doc(timeline=_timeline(repo, recent_from=value)),
-                 "timeline: 'recent_from' is not a date written YYYY-MM-DD")
+        _invalid("recent_from %r" % (value,), _doc(timeline=_timeline(dict(repo, recent_from=value))),
+                 where + ": 'recent_from' is not a date written YYYY-MM-DD")
+    # a reversed span has no inside, so every recent_from would fall outside it unless the check is skipped,
+    # and one defect should give one message
+    for value in ("2026-04-01", "2026-04-11", "2026-04-12", "2026-05-01"):
+        _invalid("recent_from %s on a reversed span" % value,
+                 _doc(timeline=_timeline(_tl_repo("repo-a", "2026-04-12", "2026-04-11", recent_from=value))),
+                 where + ": 'from' is after 'to'")
+
+    # a well-formed date inside the repository's span, so the only thing wrong is where it sits
+    _invalid("recent_from on the timeline itself", _doc(timeline=_timeline(repo, recent_from="2026-03-02")),
+             "timeline: 'recent_from' belongs on each repository")
+    check("null recent_from on the timeline itself valid", rr.validate(_doc(timeline=_timeline(repo, recent_from=None))), [])
 
     prompts = {"from": "2026-03-22", "to": "2026-04-11"}
     check("no prompts valid", rr.validate(_doc(timeline=_timeline(repo))), [])
@@ -1813,10 +1830,10 @@ def test_validation_timeline_dates():
 def test_validation_timeline_problem_order():
     timeline = _timeline(_tl_repo("repo-a", "2026-04-12", "2026-04-11"), 7,
                          {"name": "", "from": "2026-1-1", "to": "2026-02-30", "ai_from": "soon"},
-                         recent_from="2026-13-01", prompts={"from": "2026-04-11", "to": "2026-04-01"})
+                         recent_from="2026-03-01", prompts={"from": "2026-04-11", "to": "2026-04-01"})
     doc = _without(_doc(diagrams=[{"lanes": [_lane([_step("a")])]}], timeline=timeline), "scope")
     # written by hand in the order the schema is walked: the diagrams, then each repository field by field,
-    # then recent_from, then the prompts, then the scope
+    # then the recent_from the timeline itself carries, then the prompts, then the scope
     _invalid_all("timeline problems between the diagrams and the scope", doc, [
         "diagrams[0]: 'caption' is missing or empty",
         "timeline.repositories[0]: 'from' is after 'to'",
@@ -1825,9 +1842,26 @@ def test_validation_timeline_problem_order():
         "timeline.repositories[2]: 'from' is not a date written YYYY-MM-DD",
         "timeline.repositories[2]: 'to' is not a date written YYYY-MM-DD",
         "timeline.repositories[2]: 'ai_from' is not a date written YYYY-MM-DD",
-        "timeline: 'recent_from' is not a date written YYYY-MM-DD",
+        "timeline: 'recent_from' belongs on each repository",
         "timeline.prompts: 'from' is after 'to'",
         "document: 'scope' is missing or empty"])
+
+    # on the second repository, so a path built from the wrong counter names the wrong one
+    timeline = _timeline(_tl_repo("repo-a", "2026-01-01", "2026-04-11"),
+                         _tl_repo("repo-b", "2026-01-01", "2026-04-11", ai_from="soon", recent_from="2026-05-01"))
+    # written by hand in the order the validator reads the fields: ai_from before recent_from
+    _invalid_all("a repository's ai_from before its recent_from", _doc(timeline=timeline), [
+        "timeline.repositories[1]: 'ai_from' is not a date written YYYY-MM-DD",
+        "timeline.repositories[1]: 'recent_from' is outside 'from' to 'to'"])
+
+    # both dates malformed, so the order of the two date checks shows,
+    # where the well-formed recent_from above only shows the span check coming after both
+    timeline = _timeline(_tl_repo("repo-a", "2026-01-01", "2026-04-11"),
+                         _tl_repo("repo-b", "2026-01-01", "2026-04-11", ai_from="soon", recent_from="2026-02-30"))
+    # written by hand in the order the validator reads the fields: ai_from before recent_from
+    _invalid_all("a repository's malformed ai_from before its malformed recent_from", _doc(timeline=timeline), [
+        "timeline.repositories[1]: 'ai_from' is not a date written YYYY-MM-DD",
+        "timeline.repositories[1]: 'recent_from' is not a date written YYYY-MM-DD"])
 
 
 def test_timeline_html_full():
@@ -1840,7 +1874,7 @@ def test_timeline_html_full():
 def test_timeline_thin_close_split():
     repo = _tl_repo("repo-a", "2026-01-01", "2026-04-11")
     # written by hand over the 100 days from 2026-01-01, where 2026-03-02 is day 60.
-    # recent_from outside the span leaves the domain alone, or these positions would shift
+    # recent_from never enters the domain, or these positions would shift
     for name, recent, want in (
             ("no recent_from draws one close bar", None,
              _seg("close", "0.00", "100.00", "2026-01-01", "2026-04-11")),
@@ -1850,27 +1884,26 @@ def test_timeline_thin_close_split():
             ("recent_from on the last day draws only thin", "2026-04-11",
              _seg("thin", "0.00", "100.00", "2026-01-01", "2026-04-11")),
             ("recent_from on the first day draws only close", "2026-01-01",
-             _seg("close", "0.00", "100.00", "2026-01-01", "2026-04-11")),
-            ("recent_from before the span draws only close from the start", "2025-12-01",
-             _seg("close", "0.00", "100.00", "2026-01-01", "2026-04-11")),
-            ("recent_from after the span draws only thin up to the end", "2026-05-01",
-             _seg("thin", "0.00", "100.00", "2026-01-01", "2026-04-11"))):
+             _seg("close", "0.00", "100.00", "2026-01-01", "2026-04-11"))):
         extra = {"recent_from": recent} if recent else {}
-        figure = _tl_html(_timeline(repo, **extra))
+        figure = _tl_html(_timeline(dict(repo, **extra)))
         check(name, _tl_track(figure, "repo-a"), want)
         check(name + ": the axis still ends on the repository's dates",
               ('<span class="tl-tick start">2026-01-01</span>' in figure, '<span class="tl-tick end">2026-04-11</span>' in figure),
               (True, True))
 
-    # one recent_from cuts each repository by its own span
-    figure = _tl_html(_timeline(repo, _tl_repo("repo-b", "2026-03-22", "2026-04-11"),
-                                _tl_repo("repo-c", "2026-01-01", "2026-01-21"), recent_from="2026-03-02"))
-    # written by hand: repo-b starts on day 80, after recent_from, and repo-c ends on day 20, before it
+    # each repository carries its own recent_from, so each row is cut at its own boundary
+    figure = _tl_html(_timeline(dict(repo, recent_from="2026-03-02"),
+                                _tl_repo("repo-b", "2026-03-22", "2026-04-11", recent_from="2026-04-01"),
+                                _tl_repo("repo-c", "2026-01-01", "2026-01-21")))
+    # written by hand: repo-a is cut on day 60 (2026-03-02), repo-b runs from day 80 and is cut on day 90 (2026-04-01),
+    # and repo-c, with no recent_from, is one close bar from day 0 to day 20
     check("each repository split by its own span", [_tl_track(figure, n) for n in ("repo-a", "repo-b", "repo-c")], [
         _seg("thin", "0.00", "60.00", "2026-01-01", "2026-03-02")
         + _seg("close", "60.00", "40.00", "2026-03-02", "2026-04-11"),
-        _seg("close", "80.00", "20.00", "2026-03-22", "2026-04-11"),
-        _seg("thin", "0.00", "20.00", "2026-01-01", "2026-01-21")])
+        _seg("thin", "80.00", "10.00", "2026-03-22", "2026-04-01")
+        + _seg("close", "90.00", "10.00", "2026-04-01", "2026-04-11"),
+        _seg("close", "0.00", "20.00", "2026-01-01", "2026-01-21")])
     check("a row per repository in document order, then the axis", _tl_names(figure), ["repo-a", "repo-b", "repo-c", ""])
 
 
@@ -1919,13 +1952,13 @@ def test_timeline_legend():
     # written by hand: only the key for what the figure draws
     check("a close bar alone keys only close", _tl_legend(_tl_html(_timeline(repo))),
           '<span class="tl-key"><i class="tl-seg close"></i>Read closely</span>')
-    check("a thin bar alone keys only thin", _tl_legend(_tl_html(_timeline(repo, recent_from="2026-04-11"))),
+    check("a thin bar alone keys only thin", _tl_legend(_tl_html(_timeline(dict(repo, recent_from="2026-04-11")))),
           '<span class="tl-key"><i class="tl-seg thin"></i>Read thinly</span>')
 
     # the kinds are drawn close, then AI, then thin, then prompts, so a legend in drawing order would differ
-    figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-03-22", "2026-04-11", ai_from="2026-04-01"),
-                                _tl_repo("repo-b", "2026-01-01", "2026-03-22"),
-                                recent_from="2026-03-22", prompts={"from": "2026-01-01", "to": "2026-01-21"}))
+    figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-03-22", "2026-04-11", ai_from="2026-04-01", recent_from="2026-03-22"),
+                                _tl_repo("repo-b", "2026-01-01", "2026-03-22", recent_from="2026-03-22"),
+                                prompts={"from": "2026-01-01", "to": "2026-01-21"}))
     check("fixture: close is drawn before thin", (_tl_track(figure, "repo-a").startswith('<span class="tl-seg close"'),
                                                   _tl_track(figure, "repo-b").startswith('<span class="tl-seg thin"')),
           (True, True))
@@ -1984,8 +2017,9 @@ def test_timeline_escaping():
     m, e = _markup, _escaped
     labels = _all_labels({"timeline_thin": m("thin"), "timeline_close": m("close"), "timeline_ai": m("ai"),
                           "timeline_prompts": m("prompts")})
-    doc = _doc(timeline=_timeline(_tl_repo(m("repo"), "2026-01-01", "2026-04-11", ai_from="2026-01-21"),
-                                  recent_from="2026-03-02", prompts={"from": "2026-03-22", "to": "2026-04-11"}),
+    doc = _doc(timeline=_timeline(_tl_repo(m("repo"), "2026-01-01", "2026-04-11", ai_from="2026-01-21",
+                                           recent_from="2026-03-02"),
+                                  prompts={"from": "2026-03-22", "to": "2026-04-11"}),
                labels=labels)
     check("fixture: markup timeline document is valid", rr.validate(doc), [])
     page = _html(doc)

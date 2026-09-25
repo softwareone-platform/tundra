@@ -27,7 +27,7 @@ Run `/reload-plugins` afterwards to activate it.
 
 Say in your own words which repositories to read and which language to write the report in. A relative path is read from the directory you are in. It shows what it understood before it reads anything, so a misreading costs one answer. Without a language, it writes in the one you have been using with Claude. The report is long, so ask for the language you read most easily.
 
-It reads up to 100 of your changes: the 60 newest closely, and 40 spread across everything older, so the report reflects how you work now and still sees how you used to.
+It reads up to 100 of your changes in each repository: the 60 newest closely, and 40 spread across everything older, so the report reflects how you work now and still sees how you used to. Each repository with your changes adds time and tokens, and one that holds none of them is skipped quickly.
 
 It asks you only what the material cannot show, before it reads anything: which repositories and sources to include, and which commit identities are yours. It does not ask when you started using AI. Code a model wrote under your direction still shipped under your name, so it reads all of it, and it finds the date AI shows up in each repository from the history itself. That date lets it tell a pattern of yours from a habit of the tool: a pattern seen before and after it is yours. Seen only after it, a gap is still yours, because you let it through, but a strength counts as yours only when your prompts or instructions show you asked for it.
 
