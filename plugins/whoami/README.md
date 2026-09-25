@@ -16,7 +16,7 @@ The screenshots on this page show a report on two fictional repositories.
 /plugin install whoami@tundra
 ```
 
-Run `/reload-plugins` afterwards to activate it. Auto-update is off for this marketplace until you turn it on, as the [tundra README](../../README.md#install) explains.
+Run `/reload-plugins` afterwards to activate it.
 
 ```
 /whoami:whoami                                                      the repository this session is in
