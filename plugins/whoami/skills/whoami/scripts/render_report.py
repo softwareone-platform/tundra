@@ -61,8 +61,9 @@ LABELS = {
     "list_separator": "; ",
     "colon": ": ",
     "conditional": "Conditional",
-    "timeline_thin": "Read thinly",
-    "timeline_close": "Read closely",
+    "timeline_thin": "Sampled",
+    "timeline_close": "Every change read",
+    "timeline_none": "Not read",
     "timeline_ai": "AI shows up",
     "timeline_prompts": "Prompts",
     "theme": "Colour scheme",
@@ -268,6 +269,13 @@ def validate_timeline(timeline):
 
     if not isinstance(timeline, dict):
         return ["'timeline' is not an object"]
+    # the timeline runs to the day the report was written, so a repository the person has stopped working in reads as stopped
+    today = day(timeline, "today", "timeline")
+
+    def by_today(when, key, where):
+        if when and today and when > today:
+            problems.append("%s: '%s' is after the timeline's 'today'" % (where, key))
+
     repositories = timeline.get("repositories")
     if not isinstance(repositories, list) or not repositories:
         problems.append("timeline: 'repositories' is missing or empty")
@@ -279,8 +287,16 @@ def validate_timeline(timeline):
             continue
         if not isinstance(repo.get("name"), str) or not repo["name"]:
             problems.append("%s: 'name' is missing or empty" % where)
+        if repo.get("from") is None and repo.get("to") is None:
+            # a repository holding none of the person's changes is drawn as not read, and AI showing up there says nothing about them
+            for key in ("recent_from", "ai_from"):
+                if repo.get(key) is not None:
+                    problems.append("%s: '%s' needs 'from' and 'to'" % (where, key))
+            continue
         start, end = span(repo, where)
-        day(repo, "ai_from", where, required=False)
+        by_today(end, "to", where)
+        ai = day(repo, "ai_from", where, required=False)
+        by_today(ai, "ai_from", where)
         recent = day(repo, "recent_from", where, required=False)
         # the newest changes are read closely from recent_from on, so it is the date of one of the changes read
         if recent and start and end and start <= end and not start <= recent <= end:
@@ -291,7 +307,7 @@ def validate_timeline(timeline):
     prompts = timeline.get("prompts")
     if prompts is not None:
         if isinstance(prompts, dict):
-            span(prompts, "timeline.prompts")
+            by_today(span(prompts, "timeline.prompts")[1], "to", "timeline.prompts")
         else:
             problems.append("timeline: 'prompts' is not an object")
     return problems
@@ -489,9 +505,12 @@ figure.timeline { margin:24px 0 0; font-size:13px; color:var(--muted); }
 .tl-row { display:grid; grid-template-columns:11rem 1fr; gap:14px; align-items:center; min-height:24px; }
 .tl-name { color:var(--ink); line-height:1.35; overflow-wrap:anywhere; }
 .tl-track { position:relative; height:12px; }
-/* a span of a day or two would draw nothing at this scale, so every segment keeps a visible width */
-.tl-seg { position:absolute; top:2px; height:8px; min-width:6px; border-radius:4px; }
+/* a span of a day or two would draw nothing at this scale, so every segment keeps a visible width,
+   and square corners keep a narrow one a box in proportion where a rounded one shrinks to a dot */
+.tl-seg { position:absolute; top:2px; height:8px; min-width:6px; }
 .tl-seg.close { background:var(--tl-bar); }
+/* what was not read fills the rest of each row, so every row runs the whole span and a gap is not mistaken for missing data */
+.tl-seg.none { border:1px solid var(--tl-bar); min-width:0; }
 /* hatched against solid tells the thin sample from the close reading without relying on colour */
 .tl-seg.thin { border:1px solid var(--tl-bar); background:repeating-linear-gradient(135deg, var(--tl-bar) 0 1.5px, transparent 1.5px 5px); }
 .tl-seg.prompts { background:var(--tl-prompt); }
@@ -597,7 +616,8 @@ def timeline_html(timeline, lab):
     dates = [day(r[k]) for r in repositories for k in ("from", "to", "ai_from") if r.get(k)]
     if prompts:
         dates += [day(prompts["from"]), day(prompts["to"])]
-    lo, hi = min(dates), max(dates)
+    hi = day(timeline["today"])
+    lo = min(dates + [hi])
     total = max((hi - lo).days, 1)
     pos = lambda d: (d - lo).days * 100.0 / total
 
@@ -605,14 +625,25 @@ def timeline_html(timeline, lab):
         return '<span class="tl-seg %s" style="left:%.2f%%;width:%.2f%%" title="%s – %s"></span>' % (
             kind, pos(start), pos(end) - pos(start), start, end)
 
+    def unread(start, end):
+        if end <= start:
+            return ""
+        kinds.add("none")
+        return segment("none", start, end)
+
     def row(name, track):
         return '<div class="tl-row"><div class="tl-name">%s</div><div class="tl-track">%s</div></div>' % (esc(name), track)
 
     rows, kinds = [], set()
     for r in repositories:
+        if not r.get("from"):
+            # drawn across the whole track even when nothing at all was read and the span is a single day
+            kinds.add("none")
+            rows.append(row(r["name"], '<span class="tl-seg none" style="left:0.00%%;width:100.00%%" title="%s – %s"></span>' % (lo, hi)))
+            continue
         start, end = day(r["from"]), day(r["to"])
         recent = day(r["recent_from"]) if r.get("recent_from") else None
-        parts = []
+        parts = [unread(lo, start)]
         # the older changes are a thin sample spread across the history, so they are drawn apart from the newest,
         # which were all read, rather than as one bar that claims the whole span was read alike
         if recent and recent > start:
@@ -621,27 +652,31 @@ def timeline_html(timeline, lab):
         if not recent or recent < end:
             parts.append(segment("close", max(start, recent) if recent else start, end))
             kinds.add("close")
+        parts.append(unread(end, hi))
         if r.get("ai_from"):
             parts.append('<span class="tl-ai" style="left:%.2f%%" title="%s%s%s"></span>' % (
                 pos(day(r["ai_from"])), esc(lab["timeline_ai"]), esc(lab["colon"]), esc(r["ai_from"])))
             kinds.add("ai")
         rows.append(row(r["name"], "".join(parts)))
     if prompts:
-        rows.append(row(lab["timeline_prompts"], segment("prompts", day(prompts["from"]), day(prompts["to"]))))
+        start, end = day(prompts["from"]), day(prompts["to"])
+        rows.append(row(lab["timeline_prompts"], unread(lo, start) + segment("prompts", start, end) + unread(end, hi)))
         kinds.add("prompts")
 
     months = (hi.year - lo.year) * 12 + hi.month - lo.month
     step = 1 if months <= 8 else 3 if months <= 24 else 6 if months <= 60 else 12
-    ticks = ['<span class="tl-tick start">%s</span>' % lo, '<span class="tl-tick end">%s</span>' % hi]
+    # the ends read as months like the ticks between them, while each segment's title keeps its exact dates
+    ticks = ['<span class="tl-tick start">%d-%02d</span>' % (lo.year, lo.month), '<span class="tl-tick end">%d-%02d</span>' % (hi.year, hi.month)]
     y, m, n = lo.year, lo.month, 0
     while True:
         m += 1
         if m > 12:
             y, m = y + 1, 1
         mark = datetime.date(y, m, 1)
-        if mark >= hi:
+        # a tick in the end's own month would repeat the end's label beside it
+        if mark >= hi or (y, m) == (hi.year, hi.month):
             break
-        # an end date takes about a tenth of a wide track and a quarter of a phone-width one,
+        # an end label needs room at each end of the track, most of all on a phone-width one,
         # so a tick that near an end is dropped, or kept only for wide screens
         at = pos(mark)
         if (m - 1) % step == 0 and 12 < at < 88:
@@ -651,10 +686,10 @@ def timeline_html(timeline, lab):
             n += 1
     rows.append('<div class="tl-row tl-axis"><div class="tl-name"></div><div class="tl-track">%s</div></div>' % "".join(ticks))
 
-    swatches = {"thin": '<i class="tl-seg thin"></i>', "close": '<i class="tl-seg close"></i>',
+    swatches = {"thin": '<i class="tl-seg thin"></i>', "close": '<i class="tl-seg close"></i>', "none": '<i class="tl-seg none"></i>',
                 "ai": '<i class="tl-ai"></i>', "prompts": '<i class="tl-seg prompts"></i>'}
     legend = "".join('<span class="tl-key">%s%s</span>' % (swatches[k], esc(lab["timeline_" + k]))
-                     for k in ("thin", "close", "ai", "prompts") if k in kinds)
+                     for k in ("thin", "close", "none", "ai", "prompts") if k in kinds)
     return '<figure class="timeline">%s<figcaption class="tl-legend">%s</figcaption></figure>' % ("".join(rows), legend)
 
 

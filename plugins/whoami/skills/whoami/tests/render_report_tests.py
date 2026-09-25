@@ -1655,16 +1655,18 @@ def _tl_repo(name, start, end, **extra):
 
 
 def _timeline(*repositories, **extra):
-    t = {"repositories": list(repositories)}
+    # every timeline must carry its today, and most cases here end on the last of the 100 days they draw over
+    t = {"repositories": list(repositories), "today": "2026-04-11"}
     t.update(extra)
     return t
 
 
 def _tl_full():
     """A timeline with every part over 2026-01-01 to 2026-04-11, which is exactly 100 days,
-    so a day's offset from the first date is its position in percent."""
+    so a day's offset from the first date is its position in percent.
+    The span runs to today, which is its last day."""
     return _timeline(_tl_repo("repo-a", "2026-01-01", "2026-04-11", ai_from="2026-01-21", recent_from="2026-03-02"),
-                     prompts={"from": "2026-03-22", "to": "2026-04-11"})
+                     prompts={"from": "2026-03-22", "to": "2026-04-11"}, today="2026-04-11")
 
 
 def _tl_html(timeline, labels=None):
@@ -1705,9 +1707,11 @@ def _tl_legend(figure):
 
 # written by hand from _tl_full, with every position a day offset from 2026-01-01 over the 100 days:
 # thin from day 0 to day 60 (2026-03-02), close from day 60 to day 100, AI on day 20 (2026-01-21),
-# then the prompts row from day 80 (2026-03-22) to day 100,
-# then the axis with the first of February on day 31, and the first of March on day 59 as the second tick, so minor,
-# while the first of April falls on day 90, past the edge, and is dropped
+# and repo-a runs the whole span, so it has nothing not read on either side,
+# then the prompts row, not read from day 0 to day 80 (2026-03-22) and prompts from there to day 100,
+# then the axis, whose ends read as the months of 2026-01-01 and 2026-04-11,
+# with the first of February on day 31, and the first of March on day 59 as the second tick, so minor,
+# while the first of April is in the end's own month and is dropped
 _TL_FULL_FIGURE = (
     '<figure class="timeline">'
     '<div class="tl-row"><div class="tl-name">repo-a</div><div class="tl-track">'
@@ -1716,16 +1720,18 @@ _TL_FULL_FIGURE = (
     '<span class="tl-ai" style="left:20.00%" title="AI shows up: 2026-01-21"></span>'
     '</div></div>'
     '<div class="tl-row"><div class="tl-name">Prompts</div><div class="tl-track">'
+    '<span class="tl-seg none" style="left:0.00%;width:80.00%" title="2026-01-01 \u2013 2026-03-22"></span>'
     '<span class="tl-seg prompts" style="left:80.00%;width:20.00%" title="2026-03-22 \u2013 2026-04-11"></span>'
     '</div></div>'
     '<div class="tl-row tl-axis"><div class="tl-name"></div><div class="tl-track">'
-    '<span class="tl-tick start">2026-01-01</span><span class="tl-tick end">2026-04-11</span>'
+    '<span class="tl-tick start">2026-01</span><span class="tl-tick end">2026-04</span>'
     '<span class="tl-tick" style="left:31.00%">2026-02</span>'
     '<span class="tl-tick minor" style="left:59.00%">2026-03</span>'
     '</div></div>'
     '<figcaption class="tl-legend">'
-    '<span class="tl-key"><i class="tl-seg thin"></i>Read thinly</span>'
-    '<span class="tl-key"><i class="tl-seg close"></i>Read closely</span>'
+    '<span class="tl-key"><i class="tl-seg thin"></i>Sampled</span>'
+    '<span class="tl-key"><i class="tl-seg close"></i>Every change read</span>'
+    '<span class="tl-key"><i class="tl-seg none"></i>Not read</span>'
     '<span class="tl-key"><i class="tl-ai"></i>AI shows up</span>'
     '<span class="tl-key"><i class="tl-seg prompts"></i>Prompts</span>'
     '</figcaption></figure>')
@@ -1740,11 +1746,12 @@ def test_validation_timeline_shape():
     repo = _tl_repo("repo-a", "2026-01-01", "2026-04-11")
     _invalid("timeline that is a list", _doc(timeline=[repo]), "'timeline' is not an object")
     _invalid("timeline that is a string", _doc(timeline="2026"), "'timeline' is not an object")
-    # an empty object is present, so it is checked rather than taken as no timeline
-    _invalid("timeline without repositories", _doc(timeline={}), "timeline: 'repositories' is missing or empty")
+    # an object with no repositories is present, so it is checked rather than taken as no timeline
+    _invalid("timeline without repositories", _doc(timeline={"today": "2026-04-11"}),
+             "timeline: 'repositories' is missing or empty")
     _invalid("timeline with empty repositories", _doc(timeline=_timeline()),
              "timeline: 'repositories' is missing or empty")
-    _invalid("repositories that is not a list", _doc(timeline={"repositories": repo}),
+    _invalid("repositories that is not a list", _doc(timeline={"repositories": repo, "today": "2026-04-11"}),
              "timeline: 'repositories' is missing or empty")
     _invalid("repository that is not an object", _doc(timeline=_timeline("repo-a")),
              "timeline.repositories[0]: a repository must be an object")
@@ -1826,6 +1833,67 @@ def test_validation_timeline_dates():
     check("prompts from equal to to valid",
           rr.validate(_doc(timeline=_timeline(repo, prompts={"from": "2026-04-11", "to": "2026-04-11"}))), [])
 
+    # the timeline is drawn up to its today, so a timeline without a usable one has nowhere to end.
+    # validate alone comes first, so a today made optional fails here by name before drawing the page crashes the group
+    check("timeline without today refused by validate", rr.validate(_doc(timeline=_without(_timeline(repo), "today"))),
+          ["timeline: 'today' is not a date written YYYY-MM-DD"])
+    _invalid("timeline without today", _doc(timeline=_without(_timeline(repo), "today")),
+             "timeline: 'today' is not a date written YYYY-MM-DD")
+    _invalid("null today", _doc(timeline=_timeline(repo, today=None)),
+             "timeline: 'today' is not a date written YYYY-MM-DD")
+    for value in bad:
+        _invalid("today %r" % (value,), _doc(timeline=_timeline(repo, today=value)),
+                 "timeline: 'today' is not a date written YYYY-MM-DD")
+
+    # written by hand: 2026-04-12 is the day after the default today of 2026-04-11
+    _invalid("repository to after today", _doc(timeline=_timeline(_tl_repo("repo-a", "2026-01-01", "2026-04-12"))),
+             where + ": 'to' is after the timeline's 'today'")
+    _invalid("ai_from after today", _doc(timeline=_timeline(dict(repo, ai_from="2026-04-12"))),
+             where + ": 'ai_from' is after the timeline's 'today'")
+    _invalid("prompts to after today", _doc(timeline=_timeline(repo, prompts={"from": "2026-03-22", "to": "2026-04-12"})),
+             "timeline.prompts: 'to' is after the timeline's 'today'")
+    # a different index, so a path built from the wrong counter names the wrong repository
+    _invalid("second repository to after today",
+             _doc(timeline=_timeline(repo, _tl_repo("repo-b", "2026-01-01", "2026-04-12"))),
+             "timeline.repositories[1]: 'to' is after the timeline's 'today'")
+    # the report is written on its today, so a change or a prompt read that day is inside the timeline
+    check("repository to equal to today valid",
+          rr.validate(_doc(timeline=_timeline(_tl_repo("repo-a", "2026-01-01", "2026-04-11"), today="2026-04-11"))), [])
+    check("ai_from equal to today valid", rr.validate(_doc(timeline=_timeline(dict(repo, ai_from="2026-04-11")))), [])
+    check("prompts to equal to today valid",
+          rr.validate(_doc(timeline=_timeline(repo, prompts={"from": "2026-03-22", "to": "2026-04-11"}))), [])
+    # written by hand: a day April does not have, which as text sorts after today,
+    # so a date that does not parse is never also compared with today
+    _invalid("to on an impossible day after today", _doc(timeline=_timeline(dict(repo, to="2026-04-31"))),
+             where + ": 'to' is not a date written YYYY-MM-DD")
+    _invalid("ai_from on an impossible day after today", _doc(timeline=_timeline(dict(repo, ai_from="2026-04-31"))),
+             where + ": 'ai_from' is not a date written YYYY-MM-DD")
+
+    # a repository in the scope holding none of the person's changes is listed by its name alone
+    check("repository with a name alone valid", rr.validate(_doc(timeline=_timeline({"name": "repo-z"}))), [])
+    check("repository with null from and to valid",
+          rr.validate(_doc(timeline=_timeline({"name": "repo-z", "from": None, "to": None}))), [])
+    check("repository with a name alone and null ai_from and recent_from valid",
+          rr.validate(_doc(timeline=_timeline({"name": "repo-z", "ai_from": None, "recent_from": None}))), [])
+    check("repository with a name alone beside one with changes valid",
+          rr.validate(_doc(timeline=_timeline(repo, {"name": "repo-z"}))), [])
+    # with nothing read there is no span for recent_from to cut, and AI showing up there says nothing about the person
+    _invalid("recent_from on a repository with a name alone",
+             _doc(timeline=_timeline({"name": "repo-z", "recent_from": "2026-03-02"})),
+             where + ": 'recent_from' needs 'from' and 'to'")
+    _invalid("ai_from on a repository with a name alone",
+             _doc(timeline=_timeline({"name": "repo-z", "ai_from": "2026-01-21"})),
+             where + ": 'ai_from' needs 'from' and 'to'")
+    _invalid("ai_from on a repository with null from and to",
+             _doc(timeline=_timeline({"name": "repo-z", "from": None, "to": None, "ai_from": "2026-01-21"})),
+             where + ": 'ai_from' needs 'from' and 'to'")
+    # an empty string is present though falsy, so only null counts as leaving the date out
+    _invalid("empty ai_from on a repository with a name alone", _doc(timeline=_timeline({"name": "repo-z", "ai_from": ""})),
+             where + ": 'ai_from' needs 'from' and 'to'")
+    # the name is still checked on a repository with nothing read
+    _invalid("repository with an empty name alone", _doc(timeline=_timeline({"name": ""})),
+             where + ": 'name' is missing or empty")
+
 
 def test_validation_timeline_problem_order():
     timeline = _timeline(_tl_repo("repo-a", "2026-04-12", "2026-04-11"), 7,
@@ -1863,12 +1931,59 @@ def test_validation_timeline_problem_order():
         "timeline.repositories[1]: 'ai_from' is not a date written YYYY-MM-DD",
         "timeline.repositories[1]: 'recent_from' is not a date written YYYY-MM-DD"])
 
+    # today is given last, so a walk in the document's own order would report it last
+    timeline = dict(_without(_timeline(_tl_repo("", "2026-01-01", "2026-04-11"),
+                                       prompts={"from": "2026-04-12", "to": "2026-04-11"}), "today"), today="soon")
+    # written by hand: today is read before anything it is compared with
+    _invalid_all("today reported first among the timeline problems", _doc(timeline=timeline), [
+        "timeline: 'today' is not a date written YYYY-MM-DD",
+        "timeline.repositories[0]: 'name' is missing or empty",
+        "timeline.prompts: 'from' is after 'to'"])
+
+    # each of these dates is after the day today was meant to be, but an unusable today leaves nothing to compare them with,
+    # and one defect should give one message
+    timeline = _timeline(_tl_repo("repo-a", "2026-01-01", "2026-05-01", ai_from="2026-05-01"),
+                         prompts={"from": "2026-01-01", "to": "2026-05-01"}, today="2026-02-30")
+    _invalid("an unusable today skips every comparison with it", _doc(timeline=timeline),
+             "timeline: 'today' is not a date written YYYY-MM-DD")
+
+    # the fields are given in the reverse of the order they are reported in
+    reversed_repo = {"recent_from": "2026-02-30", "ai_from": "2026-04-20", "to": "2026-04-12", "from": "2026-04-13",
+                     "name": "repo-a"}
+    # written by hand in the order the validator reads the fields: the span, then its to against today,
+    # then ai_from against today, then recent_from, whose span check a reversed span skips
+    _invalid_all("a repository's span, then to and ai_from after today, then recent_from",
+                 _doc(timeline=_timeline(reversed_repo)), [
+                     "timeline.repositories[0]: 'from' is after 'to'",
+                     "timeline.repositories[0]: 'to' is after the timeline's 'today'",
+                     "timeline.repositories[0]: 'ai_from' is after the timeline's 'today'",
+                     "timeline.repositories[0]: 'recent_from' is not a date written YYYY-MM-DD"])
+    # a span in order, so recent_from's own span check shows coming after both comparisons with today
+    in_order = {"recent_from": "2026-05-01", "ai_from": "2026-04-20", "to": "2026-04-12", "from": "2026-01-01",
+                "name": "repo-a"}
+    _invalid_all("a repository's to and ai_from after today, then recent_from outside its span",
+                 _doc(timeline=_timeline(in_order)), [
+                     "timeline.repositories[0]: 'to' is after the timeline's 'today'",
+                     "timeline.repositories[0]: 'ai_from' is after the timeline's 'today'",
+                     "timeline.repositories[0]: 'recent_from' is outside 'from' to 'to'"])
+    # a malformed ai_from, so its own date check shows coming after to is compared with today
+    _invalid_all("a repository's to after today, then its malformed ai_from",
+                 _doc(timeline=_timeline(_tl_repo("repo-a", "2026-01-01", "2026-04-12", ai_from="2026-02-30"))), [
+                     "timeline.repositories[0]: 'to' is after the timeline's 'today'",
+                     "timeline.repositories[0]: 'ai_from' is not a date written YYYY-MM-DD"])
+
+    # ai_from is given first, so a walk in the document's own order would report it first
+    _invalid_all("a repository with a name alone reports recent_from before ai_from",
+                 _doc(timeline=_timeline({"name": "repo-z", "ai_from": "2026-01-21", "recent_from": "2026-03-02"})), [
+                     "timeline.repositories[0]: 'recent_from' needs 'from' and 'to'",
+                     "timeline.repositories[0]: 'ai_from' needs 'from' and 'to'"])
+
 
 def test_timeline_html_full():
     check("full timeline figure", rr.timeline_html(_tl_full(), rr.LABELS), _TL_FULL_FIGURE)
     check("English timeline labels",
-          [rr.LABELS[k] for k in ("timeline_thin", "timeline_close", "timeline_ai", "timeline_prompts")],
-          ["Read thinly", "Read closely", "AI shows up", "Prompts"])
+          [rr.LABELS[k] for k in ("timeline_thin", "timeline_close", "timeline_none", "timeline_ai", "timeline_prompts")],
+          ["Sampled", "Every change read", "Not read", "AI shows up", "Prompts"])
 
 
 def test_timeline_thin_close_split():
@@ -1888,42 +2003,100 @@ def test_timeline_thin_close_split():
         extra = {"recent_from": recent} if recent else {}
         figure = _tl_html(_timeline(dict(repo, **extra)))
         check(name, _tl_track(figure, "repo-a"), want)
-        check(name + ": the axis still ends on the repository's dates",
-              ('<span class="tl-tick start">2026-01-01</span>' in figure, '<span class="tl-tick end">2026-04-11</span>' in figure),
+        check(name + ": the axis runs from the repository's first month to today's",
+              ('<span class="tl-tick start">2026-01</span>' in figure, '<span class="tl-tick end">2026-04</span>' in figure),
               (True, True))
 
     # each repository carries its own recent_from, so each row is cut at its own boundary
     figure = _tl_html(_timeline(dict(repo, recent_from="2026-03-02"),
                                 _tl_repo("repo-b", "2026-03-22", "2026-04-11", recent_from="2026-04-01"),
                                 _tl_repo("repo-c", "2026-01-01", "2026-01-21")))
-    # written by hand: repo-a is cut on day 60 (2026-03-02), repo-b runs from day 80 and is cut on day 90 (2026-04-01),
-    # and repo-c, with no recent_from, is one close bar from day 0 to day 20
+    # written by hand: repo-a is cut on day 60 (2026-03-02),
+    # repo-b is not read up to day 80, then runs from there and is cut on day 90 (2026-04-01),
+    # and repo-c, with no recent_from, is one close bar from day 0 to day 20, then not read up to today on day 100
     check("each repository split by its own span", [_tl_track(figure, n) for n in ("repo-a", "repo-b", "repo-c")], [
         _seg("thin", "0.00", "60.00", "2026-01-01", "2026-03-02")
         + _seg("close", "60.00", "40.00", "2026-03-02", "2026-04-11"),
-        _seg("thin", "80.00", "10.00", "2026-03-22", "2026-04-01")
+        _seg("none", "0.00", "80.00", "2026-01-01", "2026-03-22")
+        + _seg("thin", "80.00", "10.00", "2026-03-22", "2026-04-01")
         + _seg("close", "90.00", "10.00", "2026-04-01", "2026-04-11"),
-        _seg("close", "0.00", "20.00", "2026-01-01", "2026-01-21")])
+        _seg("close", "0.00", "20.00", "2026-01-01", "2026-01-21")
+        + _seg("none", "20.00", "80.00", "2026-01-21", "2026-04-11")])
     check("a row per repository in document order, then the axis", _tl_names(figure), ["repo-a", "repo-b", "repo-c", ""])
+
+
+def test_timeline_not_read():
+    # today is later than every other date, so the domain ends on today rather than on the last date read
+    figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-01-01", "2026-03-02"),
+                                _tl_repo("repo-b", "2026-01-21", "2026-03-22"),
+                                {"name": "repo-z"},
+                                prompts={"from": "2026-02-10", "to": "2026-03-12"}, today="2026-04-11"))
+    # written by hand over the 100 days from 2026-01-01 to today on 2026-04-11,
+    # where 2026-01-21 is day 20, 2026-02-10 day 40, 2026-03-02 day 60, 2026-03-12 day 70, and 2026-03-22 day 80
+    check("not read from a repository's to up to today", _tl_track(figure, "repo-a"),
+          _seg("close", "0.00", "60.00", "2026-01-01", "2026-03-02")
+          + _seg("none", "60.00", "40.00", "2026-03-02", "2026-04-11"))
+    check("not read on both sides of a repository's span", _tl_track(figure, "repo-b"),
+          _seg("none", "0.00", "20.00", "2026-01-01", "2026-01-21")
+          + _seg("close", "20.00", "60.00", "2026-01-21", "2026-03-22")
+          + _seg("none", "80.00", "20.00", "2026-03-22", "2026-04-11"))
+    check("not read on both sides of the prompts", _tl_track(figure, "Prompts"),
+          _seg("none", "0.00", "40.00", "2026-01-01", "2026-02-10")
+          + _seg("prompts", "40.00", "30.00", "2026-02-10", "2026-03-12")
+          + _seg("none", "70.00", "30.00", "2026-03-12", "2026-04-11"))
+    check("a repository with a name alone is one box across the domain", _tl_track(figure, "repo-z"),
+          _seg("none", "0.00", "100.00", "2026-01-01", "2026-04-11"))
+    check("a repository with a name alone keeps its row in document order", _tl_names(figure),
+          ["repo-a", "repo-b", "repo-z", "Prompts", ""])
+
+    # the domain start comes from another repository here, not from an ai_from or the prompts
+    figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-01-01", "2026-04-11"), _tl_repo("repo-b", "2026-03-02", "2026-04-11")))
+    check("not read from the domain start up to a repository's from", _tl_track(figure, "repo-b"),
+          _seg("none", "0.00", "60.00", "2026-01-01", "2026-03-02")
+          + _seg("close", "60.00", "40.00", "2026-03-02", "2026-04-11"))
+    # repo-a runs from the domain start to today, so both of its sides are zero-width
+    check("no not-read box on a zero-width side", (_tl_track(figure, "repo-a"), figure.count('<span class="tl-seg none"')),
+          (_seg("close", "0.00", "100.00", "2026-01-01", "2026-04-11"), 1))
+
+    check("null from and to draw as a repository with a name alone",
+          _tl_track(_tl_html(_timeline(_tl_repo("repo-a", "2026-01-01", "2026-04-11"),
+                                       {"name": "repo-z", "from": None, "to": None})), "repo-z"),
+          _seg("none", "0.00", "100.00", "2026-01-01", "2026-04-11"))
+    # validate refuses an ai_from on a repository with a name alone, so this pins only that the drawing never reads it
+    figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-01-01", "2026-04-11"), {"name": "repo-z", "ai_from": "2026-01-21"}))
+    check("a repository with a name alone draws no AI marker",
+          (_tl_track(figure, "repo-z"), "tl-ai" in figure),
+          (_seg("none", "0.00", "100.00", "2026-01-01", "2026-04-11"), False))
+
+    # with no date but today the domain is a single day, and the box still runs the whole track
+    figure = _tl_html(_timeline({"name": "repo-z"}, today="2026-04-11"))
+    check("a repository with a name alone as the only row", _tl_track(figure, "repo-z"),
+          _seg("none", "0.00", "100.00", "2026-04-11", "2026-04-11"))
+    check("a one-day domain from today alone holds only its two end ticks",
+          ('<span class="tl-tick start">2026-04</span><span class="tl-tick end">2026-04</span></div>' in figure,
+           _tl_ticks(figure)), (True, []))
 
 
 def test_timeline_single_day():
     # a span of no days still has a one-day scale, so nothing is divided by zero
-    figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-04-11", "2026-04-11")))
+    figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-04-11", "2026-04-11"), today="2026-04-11"))
     check("a one-day repository draws a zero-width close bar at the start",
           _tl_track(figure, "repo-a"), _seg("close", "0.00", "0.00", "2026-04-11", "2026-04-11"))
     check("a one-day axis holds only its two end ticks",
-          ('<span class="tl-tick start">2026-04-11</span><span class="tl-tick end">2026-04-11</span></div>' in figure,
+          ('<span class="tl-tick start">2026-04</span><span class="tl-tick end">2026-04</span></div>' in figure,
            _tl_ticks(figure)), (True, []))
 
 
 def test_timeline_ai_marker():
-    # written by hand: ai_from on day 0 moves the start of the domain back to it, so the bar starts on day 20
-    figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-01-21", "2026-04-11", ai_from="2026-01-01")))
+    # written by hand: ai_from on day 0 moves the start of the domain back to it,
+    # so the row is not read up to day 20 and the bar starts there
+    figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-01-21", "2026-04-11", ai_from="2026-01-01"), today="2026-04-11"))
     check("ai_from before the span extends the domain and marks its day", _tl_track(figure, "repo-a"),
-          _seg("close", "20.00", "80.00", "2026-01-21", "2026-04-11")
+          _seg("none", "0.00", "20.00", "2026-01-01", "2026-01-21")
+          + _seg("close", "20.00", "80.00", "2026-01-21", "2026-04-11")
           + '<span class="tl-ai" style="left:0.00%" title="AI shows up: 2026-01-01"></span>')
-    check("the axis starts on ai_from", '<span class="tl-tick start">2026-01-01</span>' in figure, True)
+    # the axis start reads 2026-01 whether the domain starts on ai_from or on the span, so the exact start date is read off the fill instead
+    check("the domain starts on ai_from", 'title="2026-01-01 \u2013 2026-01-21"' in figure, True)
 
     for name, repo in (("no ai_from", _tl_repo("repo-a", "2026-01-01", "2026-04-11")),
                        ("null ai_from", _tl_repo("repo-a", "2026-01-01", "2026-04-11", ai_from=None))):
@@ -1932,14 +2105,16 @@ def test_timeline_ai_marker():
 
 
 def test_timeline_prompts_row():
-    figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-01-01", "2026-03-02"),
-                                prompts={"from": "2026-03-22", "to": "2026-04-11"}))
-    # written by hand: the prompts end on day 100, past the repository, so they set the end of the domain
-    check("the prompts row holds one prompts segment", _tl_track(figure, "Prompts"),
-          _seg("prompts", "80.00", "20.00", "2026-03-22", "2026-04-11"))
+    figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-01-21", "2026-04-11"),
+                                prompts={"from": "2026-01-01", "to": "2026-01-21"}, today="2026-04-11"))
+    # written by hand: the domain always ends on today, so the prompts can only move its start,
+    # and starting on day 0, before the repository, they set it
+    check("the prompts row holds the prompts, then what was not read up to today", _tl_track(figure, "Prompts"),
+          _seg("prompts", "0.00", "20.00", "2026-01-01", "2026-01-21")
+          + _seg("none", "20.00", "80.00", "2026-01-21", "2026-04-11"))
     check("the repository measured against the domain the prompts extend", _tl_track(figure, "repo-a"),
-          _seg("close", "0.00", "60.00", "2026-01-01", "2026-03-02"))
-    check("the axis ends on the last prompt", '<span class="tl-tick end">2026-04-11</span>' in figure, True)
+          _seg("none", "0.00", "20.00", "2026-01-01", "2026-01-21")
+          + _seg("close", "20.00", "80.00", "2026-01-21", "2026-04-11"))
     check("the prompts row follows every repository, before the axis", _tl_names(figure), ["repo-a", "Prompts", ""])
 
     figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-01-01", "2026-04-11")))
@@ -1951,22 +2126,34 @@ def test_timeline_legend():
     repo = _tl_repo("repo-a", "2026-01-01", "2026-04-11")
     # written by hand: only the key for what the figure draws
     check("a close bar alone keys only close", _tl_legend(_tl_html(_timeline(repo))),
-          '<span class="tl-key"><i class="tl-seg close"></i>Read closely</span>')
+          '<span class="tl-key"><i class="tl-seg close"></i>Every change read</span>')
     check("a thin bar alone keys only thin", _tl_legend(_tl_html(_timeline(dict(repo, recent_from="2026-04-11")))),
-          '<span class="tl-key"><i class="tl-seg thin"></i>Read thinly</span>')
+          '<span class="tl-key"><i class="tl-seg thin"></i>Sampled</span>')
 
-    # the kinds are drawn close, then AI, then thin, then prompts, so a legend in drawing order would differ
+    # the kinds are drawn not read, close, AI, then thin, then prompts, so a legend in drawing order would differ
     figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-03-22", "2026-04-11", ai_from="2026-04-01", recent_from="2026-03-22"),
                                 _tl_repo("repo-b", "2026-01-01", "2026-03-22", recent_from="2026-03-22"),
-                                prompts={"from": "2026-01-01", "to": "2026-01-21"}))
-    check("fixture: close is drawn before thin", (_tl_track(figure, "repo-a").startswith('<span class="tl-seg close"'),
-                                                  _tl_track(figure, "repo-b").startswith('<span class="tl-seg thin"')),
+                                prompts={"from": "2026-01-01", "to": "2026-01-21"}, today="2026-04-11"))
+    check("fixture: not read is drawn before close, and close before thin",
+          (figure.index('<span class="tl-seg none"') < figure.index('<span class="tl-seg close"'),
+           figure.index('<span class="tl-seg close"') < figure.index('<span class="tl-seg thin"')),
           (True, True))
-    check("the legend keys thin, close, AI, then prompts whatever the drawing order", _tl_legend(figure),
-          '<span class="tl-key"><i class="tl-seg thin"></i>Read thinly</span>'
-          '<span class="tl-key"><i class="tl-seg close"></i>Read closely</span>'
+    check("the legend keys thin, close, not read, AI, then prompts whatever the drawing order", _tl_legend(figure),
+          '<span class="tl-key"><i class="tl-seg thin"></i>Sampled</span>'
+          '<span class="tl-key"><i class="tl-seg close"></i>Every change read</span>'
+          '<span class="tl-key"><i class="tl-seg none"></i>Not read</span>'
           '<span class="tl-key"><i class="tl-ai"></i>AI shows up</span>'
           '<span class="tl-key"><i class="tl-seg prompts"></i>Prompts</span>')
+
+    # written by hand: repo-a runs from the domain start to today, so no not-read box is drawn and none is keyed
+    check("no not-read box keys no not read", "Not read" in _tl_legend(_tl_html(_timeline(repo))), False)
+    # the row with a name alone is drawn first, so a legend in drawing order would key not read before close
+    check("a not-read box keys not read after close",
+          _tl_legend(_tl_html(_timeline({"name": "repo-z"}, repo))),
+          '<span class="tl-key"><i class="tl-seg close"></i>Every change read</span>'
+          '<span class="tl-key"><i class="tl-seg none"></i>Not read</span>')
+    check("a repository with a name alone keys only not read", _tl_legend(_tl_html(_timeline({"name": "repo-z"}))),
+          '<span class="tl-key"><i class="tl-seg none"></i>Not read</span>')
 
 
 def test_timeline_tick_steps():
@@ -1979,16 +2166,17 @@ def test_timeline_tick_steps():
             (25, "2028-02-01", ["2026-07", "2027-01", "2027-07"]),
             (60, "2031-01-01", ["2027-01", "2027-07", "2028-01", "2028-07", "2029-01", "2029-07", "2030-01"]),
             (61, "2031-02-01", ["2027", "2028", "2029", "2030"])):
-        figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-01-01", end)))
+        figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-01-01", end), today=end))
         check("%d months: interior tick labels" % months, [label for _, _, label in _tl_ticks(figure)], labels)
 
     # written by hand: 1857 days from 2026-01-01 to 2031-02-01, with each first of January on day 365, 730, 1096, 1461,
     # and the one in 2031 on day 1826, past the edge.
     # the first is outside the middle, the second and fourth are odd-numbered, and only the third is a major tick
-    check("a yearly axis in full", rr.timeline_html(_timeline(_tl_repo("repo-a", "2026-01-01", "2031-02-01")), rr.LABELS)
+    check("a yearly axis in full",
+          rr.timeline_html(_timeline(_tl_repo("repo-a", "2026-01-01", "2031-02-01"), today="2031-02-01"), rr.LABELS)
           .split('<div class="tl-row tl-axis">')[1].split("<figcaption")[0],
           '<div class="tl-name"></div><div class="tl-track">'
-          '<span class="tl-tick start">2026-01-01</span><span class="tl-tick end">2031-02-01</span>'
+          '<span class="tl-tick start">2026-01</span><span class="tl-tick end">2031-02</span>'
           '<span class="tl-tick minor" style="left:19.66%">2027</span>'
           '<span class="tl-tick minor" style="left:39.31%">2028</span>'
           '<span class="tl-tick" style="left:59.02%">2029</span>'
@@ -1997,26 +2185,57 @@ def test_timeline_tick_steps():
 
 
 def test_timeline_tick_edges_and_minor():
-    # every span here is 100 days, so a first of the month lands on its day offset as a percentage.
-    # written by hand from calendar day counts
+    # written by hand from calendar day counts, each tick's day over the span's days.
+    # the first three spans are 100 days, so a first of the month lands on its day offset as a percentage,
+    # and the first of April is in the end's own month, so it is dropped for that alone.
+    # the upper edge is tested on longer spans instead, where the tick near it falls in a month before the end's
     for name, start, end, ticks in (
-            # the first of February on exactly 12 is dropped, day 40 is a major tick, day 71 the second, so minor
-            ("a tick on 12 dropped", "2026-01-20", "2026-04-30", [("", "40.00", "2026-03"), ("minor", "71.00", "2026-04")]),
-            # 13 is kept, and 72 is not inside the middle, so the third tick is minor although it is even-numbered
-            ("a tick on 13 kept, and one on 72 minor", "2026-01-19", "2026-04-29",
-             [("minor", "13.00", "2026-02"), ("minor", "41.00", "2026-03"), ("minor", "72.00", "2026-04")]),
-            # 28 is not inside the middle, so the first tick is minor, and 87 is kept but minor
-            ("a tick on 28 minor, and one on 87 kept", "2026-01-04", "2026-04-14",
-             [("minor", "28.00", "2026-02"), ("minor", "56.00", "2026-03"), ("minor", "87.00", "2026-04")]),
-            # the first of June on exactly 88 is dropped
-            ("a tick on 88 dropped", "2026-03-05", "2026-06-13", [("minor", "27.00", "2026-04"), ("minor", "57.00", "2026-05")])):
-        check(name, _tl_ticks(_tl_html(_timeline(_tl_repo("repo-a", start, end)))), ticks)
+            # the first of February on exactly 12 is dropped, so day 40 is the first tick, and a major one
+            ("a tick on 12 dropped", "2026-01-20", "2026-04-30", [("", "40.00", "2026-03")]),
+            # 13 is kept, and day 41 is inside the middle but the second tick, so minor
+            ("a tick on 13 kept, and the second minor", "2026-01-19", "2026-04-29",
+             [("minor", "13.00", "2026-02"), ("minor", "41.00", "2026-03")]),
+            # 28 is not inside the middle, so the first tick is minor although it is even-numbered
+            ("a tick on 28 minor", "2026-01-04", "2026-04-14", [("minor", "28.00", "2026-02"), ("minor", "56.00", "2026-03")]),
+            # 125 days, so a day is 0.8: the firsts of January, February and March on days 31, 62 and 90,
+            # and 72 is not inside the middle, so the third tick is minor although it is even-numbered
+            ("a tick on 72 minor", "2025-12-01", "2026-04-05",
+             [("minor", "24.80", "2026-01"), ("minor", "49.60", "2026-02"), ("minor", "72.00", "2026-03")]),
+            # 300 days, a step of three months: the firsts of April, July and October on days 78, 169 and 261,
+            # so 87 is kept, and the third tick is minor although it is even-numbered
+            ("a tick on 87 kept", "2026-01-13", "2026-11-09",
+             [("minor", "26.00", "2026-04"), ("minor", "56.33", "2026-07"), ("minor", "87.00", "2026-10")]),
+            # 300 days, a step of three months: the firsts of January, April and July 2026 on days 83, 173 and 264,
+            # and July is not the end's month, so it is the edge alone that drops the tick on exactly 88
+            ("a tick on 88 dropped", "2025-10-10", "2026-08-06", [("minor", "27.67", "2026-01"), ("minor", "57.67", "2026-04")])):
+        check(name, _tl_ticks(_tl_html(_timeline(_tl_repo("repo-a", start, end), today=end))), ticks)
+
+
+def test_timeline_axis_end_labels():
+    figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-01-20", "2026-04-20"), today="2026-04-20"))
+    # written by hand from calendar day counts: 90 days from 2026-01-20, with the firsts of February and March on days 12 and 40,
+    # both outside the middle or the second tick, so minor, and the first of April on day 71 in the end's own month.
+    # the ends are the 20th of their months, so a label printing the whole date would read 2026-01-20 and 2026-04-20
+    check("the axis ends read as months when they are not the first of a month",
+          figure.split('<div class="tl-row tl-axis">')[1].split("<figcaption")[0],
+          '<div class="tl-name"></div><div class="tl-track">'
+          '<span class="tl-tick start">2026-01</span><span class="tl-tick end">2026-04</span>'
+          '<span class="tl-tick minor" style="left:13.33%">2026-02</span>'
+          '<span class="tl-tick minor" style="left:44.44%">2026-03</span>'
+          '</div></div>')
+
+    figure = _tl_html(_timeline(_tl_repo("repo-a", "2026-01-01", "2026-04-20"), today="2026-04-20"))
+    # written by hand: 109 days from 2026-01-01, with the firsts of February, March and April on days 31, 59 and 90,
+    # so April sits at 82.57, inside 12 to 88, and is dropped only because it is in the end's own month
+    check("a first of the month in the end's own month dropped inside the middle", _tl_ticks(figure),
+          [("", "28.44", "2026-02"), ("minor", "54.13", "2026-03")])
+    check("the end's month labelled once, by the end", figure.count(">2026-04<"), 1)
 
 
 def test_timeline_escaping():
     m, e = _markup, _escaped
-    labels = _all_labels({"timeline_thin": m("thin"), "timeline_close": m("close"), "timeline_ai": m("ai"),
-                          "timeline_prompts": m("prompts")})
+    labels = _all_labels({"timeline_thin": m("thin"), "timeline_close": m("close"), "timeline_none": m("none"),
+                          "timeline_ai": m("ai"), "timeline_prompts": m("prompts")})
     doc = _doc(timeline=_timeline(_tl_repo(m("repo"), "2026-01-01", "2026-04-11", ai_from="2026-01-21",
                                            recent_from="2026-03-02"),
                                   prompts={"from": "2026-03-22", "to": "2026-04-11"}),
@@ -2030,8 +2249,10 @@ def test_timeline_escaping():
     check("every legend label escaped", _tl_legend(page),
           '<span class="tl-key"><i class="tl-seg thin"></i>%s</span>'
           '<span class="tl-key"><i class="tl-seg close"></i>%s</span>'
+          '<span class="tl-key"><i class="tl-seg none"></i>%s</span>'
           '<span class="tl-key"><i class="tl-ai"></i>%s</span>'
-          '<span class="tl-key"><i class="tl-seg prompts"></i>%s</span>' % (e("thin"), e("close"), e("ai"), e("prompts")))
+          '<span class="tl-key"><i class="tl-seg prompts"></i>%s</span>' % (
+              e("thin"), e("close"), e("none"), e("ai"), e("prompts")))
     check("no raw script tag anywhere", "<script" in page, False)
     # the value runs to the quote that closes the attribute, so a raw quote inside it would show up here
     values = re.findall(r'<span class="tl-ai" style="[^"]*" title="(.*?)"></span>', page)
@@ -2060,20 +2281,22 @@ def test_timeline_placement():
 
 
 def test_timeline_labels_localised():
-    labels = {"timeline_thin": "\u8f15\u8b80", "timeline_close": "\u7d30\u8b80", "timeline_ai": "AI \u51fa\u73fe",
-              "timeline_prompts": "\u63d0\u793a"}
+    labels = {"timeline_thin": "\u8f15\u8b80", "timeline_close": "\u7d30\u8b80", "timeline_none": "\u672a\u8b80",
+              "timeline_ai": "AI \u51fa\u73fe", "timeline_prompts": "\u63d0\u793a"}
     page = _html(_doc(timeline=_tl_full(), labels=labels))
     # written by hand: each key's swatch, then its localised label, in the fixed order
     check("localised legend", _tl_legend(page),
           '<span class="tl-key"><i class="tl-seg thin"></i>\u8f15\u8b80</span>'
           '<span class="tl-key"><i class="tl-seg close"></i>\u7d30\u8b80</span>'
+          '<span class="tl-key"><i class="tl-seg none"></i>\u672a\u8b80</span>'
           '<span class="tl-key"><i class="tl-ai"></i>AI \u51fa\u73fe</span>'
           '<span class="tl-key"><i class="tl-seg prompts"></i>\u63d0\u793a</span>')
     check("localised prompts row", _tl_track(page, "\u63d0\u793a"),
-          _seg("prompts", "80.00", "20.00", "2026-03-22", "2026-04-11"))
+          _seg("none", "0.00", "80.00", "2026-01-01", "2026-03-22")
+          + _seg("prompts", "80.00", "20.00", "2026-03-22", "2026-04-11"))
     check("localised AI marker title", 'title="AI \u51fa\u73fe: 2026-01-21"' in page, True)
     check("English timeline labels gone",
-          [s for s in ("Read thinly", "Read closely", "AI shows up", ">Prompts<") if s in page], [])
+          [s for s in ("Sampled", "Every change read", "Not read", "AI shows up", ">Prompts<") if s in page], [])
 
 
 def test_timeline_absent_from_markdown():
@@ -2083,7 +2306,20 @@ def test_timeline_absent_from_markdown():
         check(name + ": Markdown unchanged by a timeline", _md_lines(with_timeline), _md_lines(doc))
         text = "\n".join(_md_lines(with_timeline))
         check(name + ": no timeline date or label in the Markdown",
-              [s for s in ("2026-03-02", "2026-01-21", "Read thinly", "Read closely", "AI shows up") if s in text], [])
+              [s for s in ("2026-03-02", "2026-01-21", "Sampled", "Every change read", "Not read", "AI shows up") if s in text], [])
+
+
+def test_timeline_css():
+    style = _style(_html(_doc()))
+    # the opener starts its own line, so the swatch rule .tl-key .tl-seg is not taken for the base segment rule
+    opener = "\n.tl-seg {"
+    block = _css_block(style, opener)
+    check("the base segment rule written once", style.count(opener), 1)
+    # a narrow box with rounded corners shrinks to a dot, so the corners are square
+    check("the base segment rule has no border-radius", (block is not None, block is not None and "border-radius" in block),
+          (True, False))
+    # written by hand: an empty box outlined in the bar colour, which may shrink to nothing where the base rule keeps six pixels
+    check("the not-read box rule", ".tl-seg.none { border:1px solid var(--tl-bar); min-width:0; }" in style, True)
 
 
 # ----- visible text and the plain-language checks --------------------------------
@@ -2327,6 +2563,14 @@ def test_validation_labels_completeness():
         del labels[key]
     check("several labels missing, named in LABELS order", rr.validate(_doc(labels=labels)),
           ["labels: summary, colon, timeline_ai missing; give every label or none"])
+    _invalid("the not-read label missing", _doc(labels=_without(_all_labels({}), "timeline_none")),
+             "labels: timeline_none missing; give every label or none")
+    labels = _all_labels({})
+    # removed out of LABELS order, so a list in removal order would differ
+    for key in ("timeline_ai", "timeline_none", "timeline_close"):
+        del labels[key]
+    check("the not-read label named in LABELS order among the timeline labels", rr.validate(_doc(labels=labels)),
+          ["labels: timeline_close, timeline_none, timeline_ai missing; give every label or none"])
 
     check("empty labels valid", rr.validate(_doc(labels={})), [])
     check("null labels valid", rr.validate(_doc(labels=None)), [])
@@ -2742,10 +2986,11 @@ _TESTS = (test_valid_document_renders, test_validation_document, test_validation
           test_card_rules_and_elements, test_summary_not_a_card, test_lead_wrapper, test_last_row_table_rule,
           test_heading_rules_reach_lead, test_figure_margins,
           test_validation_timeline_shape, test_validation_timeline_dates, test_validation_timeline_problem_order,
-          test_timeline_html_full, test_timeline_thin_close_split, test_timeline_single_day, test_timeline_ai_marker,
-          test_timeline_prompts_row, test_timeline_legend, test_timeline_tick_steps, test_timeline_tick_edges_and_minor,
+          test_timeline_html_full, test_timeline_thin_close_split, test_timeline_not_read, test_timeline_single_day,
+          test_timeline_ai_marker, test_timeline_prompts_row, test_timeline_legend, test_timeline_tick_steps,
+          test_timeline_tick_edges_and_minor, test_timeline_axis_end_labels,
           test_timeline_escaping, test_timeline_placement, test_timeline_labels_localised,
-          test_timeline_absent_from_markdown,
+          test_timeline_absent_from_markdown, test_timeline_css,
           test_visible_text_walk, test_visible_text_skips, test_visible_text_bad_containers,
           test_sha_pattern, test_validation_sha,
           test_validation_labels_completeness, test_validation_sha_and_labels_problem_order, test_colon_label,
