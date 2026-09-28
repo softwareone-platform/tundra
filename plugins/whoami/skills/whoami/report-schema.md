@@ -54,6 +54,7 @@ The report is one JSON document, written in the person's language, which `script
   ],
 
   "scope": { "label shown to the reader": "value, or a list of values" },
+  "identity": { "repositories": ["the repository paths passed to identity.py"], "addresses": ["the confirmed emails its check passed"] },
   "dissolved": [ { "name": "the candidate", "evidence": "what refuted it" } ],
   "events": [ { "text": "a single event noticed along the way", "ref": "where" } ]
 }
@@ -85,5 +86,7 @@ A `PATTERN` is:
 - Every pattern needs at least two `instances`. A strength needs `exceptions`, which may be an empty list only when you looked and found none.
 - `language` is a BCP 47 code, such as `en`, `de`, or `ja`. Write Chinese of any variety as `zh-` followed by a region or script: `zh-TW` or `zh-HK` for Traditional, `zh-CN` for Simplified, and `zh-HK` for Cantonese too. Never write a code such as `yue` or `cmn`. The code becomes the page's `lang`, which the browser uses to choose fonts, and `zh-` is the form every browser recognises for Chinese.
 - `labels` translates the headings into the report's language. Give every label or none: the renderer rejects a `labels` object with any key missing, because a missing label would fall back to English in the middle of a report written in another language. The keys are `summary`, `strong`, `weak`, `strengths`, `gaps`, `styles`, `implications`, `scope`, `appendix`, `dissolved`, `events`, `pattern`, `description`, `source`, `confidence`, `evidence`, `gives`, `costs`, `area`, `meaning`, `related`, `verified`, `depends`, `conditional`, the short confidence label for a conditional pattern, `instances`, `exceptions`, `calibration`, `checked`, `report_file`, `code`, `prompts`, `instructions`, `timeline_thin`, `timeline_close`, `timeline_none`, `timeline_ai`, and `timeline_prompts`, the timeline's legend and prompts row, `theme`, `theme_auto`, `theme_light`, and `theme_dark`, the colour scheme switch, `separator`, the text between two sources, such as "、" in Chinese, `list_separator`, the text between two items in the summary, such as "；" in Chinese, because an item can itself hold a comma, and `colon`, the text between a label and its value, such as "：" in Chinese.
+
+- `identity` is required and never shown. The renderer runs the identity script's check on it before writing anything, and exits 4 when the addresses cannot be shown to be the person running it. Give the same repositories and addresses the check passed in step 2.
 
 The renderer checks the document before writing anything and exits 2 with a list of what is wrong. Fix the document and run it again.

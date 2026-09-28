@@ -35,7 +35,7 @@ It reads the code with several subagents in parallel, so a report over a few doz
 
 It does not ask you to confirm its findings. For each pattern it looks for the constraint that would explain it away, such as a package that other repositories consume, a gate CI enforces, or a standing instruction the prompt relied on, and checks it in the material. When the constraint lies outside anything it can read, the report states the pattern as holding unless that constraint does.
 
-It assesses the person running it. The material it reads and the context it asks for belong to the person who did the work, so pointing it at someone else's commits produces guesses.
+It assesses the person running it. The material it reads and the context it asks for belong to the person who did the work, so pointing it at someone else's commits produces guesses. It starts from the git identity configured in your repositories, and it stops, and writes no report, when an identity you confirm is not linked to that one.
 
 ## What it reads and what it sends
 

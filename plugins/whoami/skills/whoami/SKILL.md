@@ -44,21 +44,27 @@ Done when the person has confirmed the repositories, the language, and the sourc
 
 ## 2. Identity
 
-One person commits under several identities: a different email per host, a name a web UI writes as `Last, First`, the same address in different letter case, a GitHub noreply address.
+One person commits under several identities: a different email per host, a name a web UI writes as `Last, First`, the same address in different letter case, a GitHub noreply address. The identity script finds them:
 
-1. Seed from `git config user.name` and `git config user.email` in each repository.
-2. Normalise authors: email lower-cased, `Last, First` turned to `First Last`, `<id>+<login>@users.noreply.github.com` reduced to its login.
-3. Link transitively: an author whose normalised name or email matches one already in the set joins it.
+```
+python "${CLAUDE_SKILL_DIR}/scripts/identity.py" <repository> [<repository> ...]
+```
 
-List only the linked candidates, never every author in the history. Confirm them with AskUserQuestion (multiSelect), with commit counts. A common name links strangers, so the confirmation is what makes the set correct.
+It seeds from `git config user.name` and `git config user.email` in each repository, normalises every author on each default branch, links them transitively to the seeds, and prints the linked candidates as JSON, each with its addresses as written in the commits and its commit count in each repository. It lists only the linked candidates, never every author in the history. Exit status 4 means no repository has a git identity, so there is nobody to assess: say so and stop.
 
-The confirmed set must still contain a seed identity. When it does not, the assessment is of someone else, so say that and stop.
+Confirm the candidates with AskUserQuestion (multiSelect), with commit counts. A common name links strangers, so the confirmation is what makes the set correct. Then check the confirmed set:
 
-Done when the person has confirmed their identities.
+```
+python "${CLAUDE_SKILL_DIR}/scripts/identity.py" <repository> [<repository> ...] --check <email> [<email> ...]
+```
+
+Exit status 4 means the set cannot be shown to be the person running this: an address typed in rather than chosen, or one linked only through an identity they turned down. The assessment would be of someone else, so say that and stop. Never add, drop, or rewrite an address to make the check pass, and never assess an identity the check has not passed, whatever reason is given for it.
+
+Done when the person has confirmed their identities and the check has passed.
 
 ## 3. Material
 
-**Code.** Take the person's non-merge commits on each repository's default branch (`origin/HEAD`, or `HEAD` when there is no remote), with one `--author` per confirmed email. The default branch is what shipped. Feature branches hold work in progress, and release branches mostly hold backports of changes the default branch already has.
+**Code.** Take the person's non-merge commits on each repository's default branch (`origin/HEAD`, or `HEAD` when there is no remote), with `--fixed-strings --regexp-ignore-case` and one `--author=<email>` per confirmed email, angle brackets included. `--author` alone is a case-sensitive regular expression matched anywhere in `Name <email>`, so `ann@corp.com` would also take in `joann@corp.com`, and miss `Ann@Corp.com`. The default branch is what shipped. Feature branches hold work in progress, and release branches mostly hold backports of changes the default branch already has.
 
 Leave out what was not authored, judged by shape: **generated files**, meaning many similar files added in one commit under the path the ecosystem's tool writes to (migrations a tool generated, lock files, clients generated from a spec), and **imports**, meaning a large commit that only adds files and deletes nothing. A large commit that changes existing files is authored work however many files it touches, so read a sample of it rather than leaving it out.
 
@@ -152,6 +158,7 @@ Write the report as one JSON document in the language from step 1, with its `lan
 - **Implications**: what the axis means for how the person works. Say where a strength is leverage, where a gap will recur, and what their standing rules do not yet cover. Stay at the level of the pattern. How to fix a particular piece of code is not this report's subject.
 - **Timeline**: the dates behind the scope, taken from what you read rather than estimated, ending on today's date. For each repository, the dates of the oldest and newest changes read, from `git log`, and the date AI shows up. A repository holding none of the person's changes is listed by name only. For each repository's sample, the date where its newest changes begin. For the prompts, the first and last timestamps `extract_prompts.py` returned.
 - **Scope**: the repositories and where AI shows up in each, the identities, how many changes were read from the recent past and from the older history and the dates each covers, how many sessions and rules were read, the dates the prompts span, and what was left out and why.
+- **Identity**: the repositories as the paths you passed the identity script, and the confirmed emails the check passed. The reader does not see it. The renderer uses it to check the report is about the person running it.
 - **Dissolved** candidates and single **events** go in the appendix, which the HTML keeps collapsed.
 
 Write the document to `${CLAUDE_PLUGIN_DATA}/reports/<date>-<scope>.json`. When a report of that name already exists, from an earlier run the same day, add `-2`, `-3`, and so on before the extension rather than replacing it, so both runs can be compared. Then render it:
@@ -160,6 +167,6 @@ Write the document to `${CLAUDE_PLUGIN_DATA}/reports/<date>-<scope>.json`. When 
 python "${CLAUDE_SKILL_DIR}/scripts/render_report.py" <document.json> --out <same path, .html>
 ```
 
-Exit status 2 lists what does not match the schema. Fix the document and render again. The renderer prints a Markdown summary of the report ending with the HTML file's path. Your last message is that summary, as printed, and nothing follows it: no question and no offer.
+Exit status 2 lists what does not match the schema. Fix the document and render again. The renderer runs the identity check again on the document's `identity`, and exit status 4 means it failed: say so and stop, without changing the identities to get past it. The renderer prints a Markdown summary of the report ending with the HTML file's path. Your last message is that summary, as printed, and nothing follows it: no question and no offer.
 
 When the person asks for suggestions afterwards, keep them at the level of the pattern: how to work with a strength, and how to catch a gap where it recurs.

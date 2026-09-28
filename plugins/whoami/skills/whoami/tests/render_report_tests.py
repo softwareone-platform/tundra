@@ -6,6 +6,7 @@ built from one minimal valid document and varied one field at a time.
 Each rule in the renderer is load-bearing: removing it turns at least one check red.
 
 Pure stdlib, ASCII-only source and output (Windows cp1252 console).
+Also needs git on PATH and a writable temp directory, for the one repository the identity gate reads.
 Exits non-zero on any failure. Run from anywhere:
     python tests/render_report_tests.py
 """
@@ -27,6 +28,42 @@ import render_report as rr  # noqa: E402
 _SCRIPT = os.path.join(_SCRIPTS, "render_report.py")
 
 SCHEMA_HEADER = "the report does not match the schema, so nothing was written:\n"
+NOT_THE_PERSON_HEADER = "the report is not about the person running this, so nothing was written:\n"
+
+
+# ----- the repository the identity gate reads ---------------------------------
+
+_BASE = tempfile.mkdtemp()
+
+# a global commit.gpgsign or core.hooksPath would break the fixture's own commit,
+# and an inherited GIT_DIR would win over git -C, so git sees only this repository's own config.
+# it is set on os.environ so the subprocess cases, which copy it, inherit the same isolation.
+_NO_CONFIG = os.path.join(_BASE, "empty.gitconfig")
+open(_NO_CONFIG, "w").close()
+os.environ["GIT_CONFIG_GLOBAL"] = _NO_CONFIG
+os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+for _name in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
+              "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+    os.environ.pop(_name, None)
+
+_REPO = os.path.join(_BASE, "repo-a")
+_EMAIL = "person@example.com"
+
+
+def _git(*args):
+    subprocess.run(["git", "-C", _REPO] + list(args), check=True, capture_output=True)
+
+
+os.makedirs(_REPO)
+_git("init", "--quiet", "--initial-branch=main")
+_git("config", "user.name", "The Person")
+_git("config", "user.email", _EMAIL)
+_git("commit", "--quiet", "--allow-empty", "-m", "the one commit")
+
+
+def _identity():
+    """The fixture repository's own author as the identity, fresh each time so no case can edit another's."""
+    return {"repositories": [_REPO], "addresses": [_EMAIL]}
 
 
 # every check records (group, name, ok, detail),
@@ -60,10 +97,11 @@ def _without(obj, key):
 
 
 def _doc(**over):
-    """The smallest document the schema accepts: a summary, one strength, and a scope."""
+    """The smallest document the schema accepts: a summary, one strength, a scope, and an identity."""
     doc = {"summary": {"text": "the summary"},
            "strengths": [_pattern("s1", exceptions=[])],
-           "scope": {"repositories": "repo-a"}}
+           "scope": {"repositories": "repo-a"},
+           "identity": _identity()}
     doc.update(over)
     return doc
 
@@ -91,6 +129,7 @@ def _full_doc():
         "scope": {"repositories": "repo-a", "periods": ["2026-01", "2026-02"]},
         "dissolved": [{"name": "dissolved one", "evidence": "refuted by counts"}],
         "events": [{"text": "event one", "ref": "event ref"}],
+        "identity": _identity(),
     }
 
 
@@ -2367,6 +2406,7 @@ def _visible_doc():
         "dissolved": [{"name": "hidden dissolved", "evidence": "hidden evidence"}],
         "events": [{"text": "hidden event", "ref": "hidden event ref"}],
         "timeline": _timeline(_tl_repo("hidden repository", "2026-01-01", "2026-04-11")),
+        "identity": {"repositories": ["hidden repository"], "addresses": ["hidden@example.com"]},
     }
 
 
@@ -2927,6 +2967,125 @@ def test_theme_contrast():
     check("a bar under the shape minimum fails", _contrast_failures(fainter_bar), [("tl-bar", "sheet", 2.61)])
 
 
+# ----- identity: its shape, and the gate on the person running this --------------
+
+_STRANGER = "stranger@example.com"
+_COLLEAGUE = "colleague@example.com"
+_NOBODY = "no repository has a git user.name or user.email, so there is nobody to assess"
+
+
+def _no_commits(address):
+    return "'%s' has no commits on the default branch of any repository in scope" % address
+
+
+def _not_linked(address):
+    return "'%s' is not linked to the git identity of the person running this" % address
+
+
+def _git_at(repository, *args):
+    subprocess.run(["git", "-C", repository] + list(args), check=True, capture_output=True)
+
+
+def _colleague_repo():
+    """A repository with no user.name or user.email of its own, holding one commit by a colleague.
+    It is built apart from _REPO, whose single commit by the person the other cases rely on."""
+    path = tempfile.mkdtemp()
+    _git_at(path, "init", "--quiet", "--initial-branch=main")
+    # the author is given for this one commit only, so the repository keeps no identity that could seed it
+    _git_at(path, "-c", "user.name=A Colleague", "-c", "user.email=" + _COLLEAGUE,
+            "commit", "--quiet", "--allow-empty", "-m", "a colleague's commit")
+    return path
+
+
+def _not_the_person(name, doc, problems):
+    code, out, err, out_path = _main(doc)
+    check(name + ": exits 4", code, 4)
+    check(name + ": the problems named on stderr in order", err,
+          NOT_THE_PERSON_HEADER + "".join("- %s\n" % p for p in problems))
+    check(name + ": stdout silent", out, "")
+    check(name + ": no file written", os.path.exists(out_path), False)
+
+
+def test_validation_identity():
+    _invalid("missing identity", _without(_doc(), "identity"), "document: 'identity' is missing or empty")
+    for name, value in (("a list", [_REPO]), ("a string", _EMAIL)):
+        _invalid("identity that is " + name, _doc(identity=value), "document: 'identity' is missing or empty")
+    # an empty object is still an object, so each key it lacks is named, repositories first
+    _invalid_all("empty identity", _doc(identity={}), ["identity: 'repositories' is missing or empty",
+                                                       "identity: 'addresses' is missing or empty"])
+    for key in ("repositories", "addresses"):
+        missing = "identity: '%s' is missing or empty" % key
+        _invalid("identity without " + key, _doc(identity=_without(_identity(), key)), missing)
+        _invalid("identity with empty " + key, _doc(identity=dict(_identity(), **{key: []})), missing)
+        _invalid("identity %s that is a string" % key, _doc(identity=dict(_identity(), **{key: "repo-a"})), missing)
+        not_text = "identity: '%s' is not a list of text" % key
+        # a good entry leads, so the rule is shown to look past the first entry
+        good = _identity()[key][0]
+        for name, bad in (("a number", 5), ("null", None), ("an empty string", ""), ("only spaces", "  ")):
+            _invalid("identity %s holding %s" % (key, name), _doc(identity=dict(_identity(), **{key: [good, bad]})),
+                     not_text)
+        _invalid("identity %s holding several bad entries" % key,
+                 _doc(identity=dict(_identity(), **{key: [5, None, ""]})), not_text)
+    _invalid_all("both identity lists bad", _doc(identity={"repositories": [5], "addresses": [""]}),
+                 ["identity: 'repositories' is not a list of text", "identity: 'addresses' is not a list of text"])
+    # the keys are walked in a fixed order, so a bad addresses list does not jump ahead of a missing repositories
+    _invalid_all("identity without repositories and with a bad addresses list", _doc(identity={"addresses": [None]}),
+                 ["identity: 'repositories' is missing or empty", "identity: 'addresses' is not a list of text"])
+    # the gate strips each address itself, so an address is refused only when it is blank once stripped
+    check("address padded with spaces valid",
+          rr.validate(_doc(identity={"repositories": [_REPO], "addresses": [" " + _EMAIL + " "]})), [])
+
+
+def test_validation_identity_problem_order():
+    doc = _without(_doc(labels=_without(_all_labels({}), "gaps"),
+                        identity={"repositories": "repo-a", "addresses": ["  "]}), "scope")
+    # written by hand in the order validate reports: the labels, then the scope, then each identity key
+    _invalid_all("identity problems after the scope", doc, [
+        "labels: gaps missing; give every label or none",
+        "document: 'scope' is missing or empty",
+        "identity: 'repositories' is missing or empty",
+        "identity: 'addresses' is not a list of text"])
+
+
+def test_identity_gate():
+    check("NOT_THE_PERSON constant", rr.NOT_THE_PERSON, 4)
+    colleague_repo = _colleague_repo()
+    _not_the_person("a stranger's address", _doc(identity={"repositories": [_REPO], "addresses": [_STRANGER]}),
+                    [_no_commits(_STRANGER)])
+    # the person's own address next to the stranger's does not let the stranger through
+    _not_the_person("a stranger beside the person",
+                    _doc(identity={"repositories": [_REPO], "addresses": [_EMAIL, _STRANGER]}), [_no_commits(_STRANGER)])
+    not_a_repo = tempfile.mkdtemp()
+    _not_the_person("a directory that is not a repository",
+                    _doc(identity={"repositories": [_REPO, not_a_repo], "addresses": [_EMAIL]}),
+                    ["not a git repository: " + not_a_repo])
+    # the colleague has a commit in scope, but shares no name or address with the person
+    _not_the_person("a colleague's address",
+                    _doc(identity={"repositories": [_REPO, colleague_repo], "addresses": [_EMAIL, _COLLEAGUE]}),
+                    [_not_linked(_COLLEAGUE)])
+    _not_the_person("no repository has a git identity",
+                    _doc(identity={"repositories": [colleague_repo], "addresses": [_COLLEAGUE]}), [_NOBODY])
+    # written by hand: every address without commits in sorted order, then every unlinked one,
+    # so the colleague comes after zed although it sorts before it
+    _not_the_person("several problems",
+                    _doc(identity={"repositories": [_REPO, colleague_repo],
+                                   "addresses": ["zed@example.com", _COLLEAGUE, "able@example.com", _EMAIL]}),
+                    [_no_commits("able@example.com"), _no_commits("zed@example.com"), _not_linked(_COLLEAGUE)])
+    # the schema is checked first, so a document that is both invalid and about a stranger is sent back to be fixed
+    _invalid("schema problem ahead of a stranger's identity",
+             _doc(summary={}, identity={"repositories": [_REPO], "addresses": [_STRANGER]}),
+             "summary: 'text' is missing or empty")
+
+
+def test_identity_gate_passes():
+    # the addresses are compared lower-cased and stripped, so the person's own address written otherwise still passes
+    for name, address in (("different letter case", "Person@Example.COM"), ("padded with spaces", " " + _EMAIL + " ")):
+        code, out, err, out_path = _main(_doc(identity={"repositories": [_REPO], "addresses": [address]}))
+        check(name + ": exits 0", code, 0)
+        check(name + ": stderr silent", err, "")
+        check(name + ": HTML file written", os.path.isfile(out_path), True)
+
+
 # ----- a cp1252 console ----------------------------------------------------------
 
 def test_non_ascii_on_cp1252_console():
@@ -2965,6 +3124,24 @@ def test_diagram_on_cp1252_console():
     check("arrow with its note printed as UTF-8", "   \u2193 then" in lines, True)
 
 
+def test_identity_gate_on_cp1252_console():
+    # an address outside cp1252 is quoted in the problem, so a console left at cp1252 fails on the refusal itself
+    address = "\u7e41\u9ad4@example.com"
+    tmp = tempfile.mkdtemp()
+    report = os.path.join(tmp, "report.json")
+    out_path = os.path.join(tmp, "report.html")
+    with open(report, "w", encoding="utf-8") as f:
+        json.dump(_doc(identity={"repositories": [_REPO], "addresses": [address]}), f)
+    env = dict(os.environ, PYTHONIOENCODING="cp1252")
+    proc = subprocess.run([sys.executable, _SCRIPT, report, "--out", out_path], capture_output=True, env=env, timeout=60)
+    check("subprocess exits 4", proc.returncode, 4)
+    check("subprocess stdout empty", proc.stdout, b"")
+    check("no file written", os.path.exists(out_path), False)
+    # a Windows stream writes each newline as CR LF, so the lines are compared rather than the bytes
+    check("header and problem printed as UTF-8", proc.stderr.decode("utf-8").splitlines(),
+          [NOT_THE_PERSON_HEADER.rstrip("\n"), "- " + _no_commits(address)])
+
+
 _TESTS = (test_valid_document_renders, test_validation_document, test_validation_pattern_fields,
           test_validation_instances, test_validation_exceptions, test_validation_styles, test_validation_references,
           test_validation_shapes, test_validation_lists_every_problem, test_invalid_json, test_missing_report,
@@ -2997,7 +3174,9 @@ _TESTS = (test_valid_document_renders, test_validation_document, test_validation
           test_markdown_section_order, test_diagram_markdown_direct, test_markdown_implications_lines,
           test_theme_labels, test_theme_switch, test_theme_switch_placement,
           test_theme_tokens, test_theme_css, test_theme_contrast,
-          test_non_ascii_on_cp1252_console, test_diagram_on_cp1252_console)
+          test_validation_identity, test_validation_identity_problem_order, test_identity_gate,
+          test_identity_gate_passes,
+          test_non_ascii_on_cp1252_console, test_diagram_on_cp1252_console, test_identity_gate_on_cp1252_console)
 
 
 def _run_all():

@@ -4,7 +4,7 @@ This covers the `whoami` plugin. The registry-level rules are in the repository 
 
 ## What it is, and why it is this small
 
-One skill, a `SKILL.md`, and two scripts: `scripts/extract_prompts.py` gets the person's prompts out of the transcripts, and `scripts/render_report.py` turns the report document into HTML. It came out of a manual trial on one developer's repositories, and the trial settled its shape:
+One skill, a `SKILL.md`, and three scripts: `scripts/identity.py` finds and checks the person's git identities, `scripts/extract_prompts.py` gets the person's prompts out of the transcripts, and `scripts/render_report.py` turns the report document into HTML. It came out of a manual trial on one developer's repositories, and the trial settled its shape:
 
 - **Findings a script could compute did not survive the interview.** Commit bursts, ratios, where contributions concentrate: every one of them dissolved once the author named the constraint behind it. The findings that survived all came from reading the code itself. So there is no mechanical analysis layer. The model reads the diffs, the prompts, and the instructions, and the scripts only extract and render.
 - **Testing each pattern against its constraint is the instrument.** In the trial, constraints the author knew overturned most of the conclusions drawn from the code. So every pattern is tested before it reaches the conclusion, and it ends in one of four states: dissolved, holds, narrowed, or conditional.
@@ -38,6 +38,17 @@ One skill, a `SKILL.md`, and two scripts: `scripts/extract_prompts.py` gets the 
 - **The reader sees plain language, and identifiers stay in the evidence.** The second run's report was correct and hard to read: commit SHAs, file names, and line numbers in every sentence, and pattern codes cited in the conclusion before they were defined. So every visible field describes what happened, and a citation lives only in an instance's `ref`, collapsed in the HTML. The citations are kept rather than dropped, because they are how a wrong claim gets caught: the second run cited a line number from the tip against a commit's SHA.
 - **Only patterns that hold are shown, each with a confidence.** A narrowed pattern is shown in its narrowed form, and a conditional one as `depends` on its constraint. Dissolved candidates are in the collapsed appendix, where a maintainer checking the skill can still see them.
 - **Styles are a third kind of pattern.** A trade-off such as tuning a value by deploying and watching is neither a strength nor a gap, and forcing it into either misreports it. A style states what it gives and what it costs.
+
+## The identity script
+
+The skill assesses the person running it, and that rule used to be prose the model applied, so the model could be argued out of it. The prose also had a hole: it required the confirmed set to contain a seed, not to be made of identities linked to one, and the identity question's "Other" option let a person confirm a colleague's address next to their own. So the rule is code, run twice.
+
+- **Seeded from `git config`, and linked through confirmed identities only.** A candidate the person turned down cannot carry a stranger into the set through a shared name. Every confirmed address has to be reachable from a seed that way, which also covers the old rule that the set contains a seed.
+- **It is a deterrent, not a boundary.** The seed is local configuration, the plugin's files are on the person's machine, and `git log --author` needs no plugin. The check stops the model being talked past it and makes getting past it a deliberate edit. The Claude account's email was considered as a second seed and left out: it is missing for a login by API key, and a person often commits under an address other than their work account's.
+- **The renderer runs the check again.** The report is what does harm when it is passed on, so the document carries an `identity` the reader never sees, and the renderer writes nothing when the check fails on it. It exits 4 rather than 2, because 2 tells the model to fix the document, and this failure must never be fixed by editing the addresses.
+- **Step 3 filters with `--fixed-strings --regexp-ignore-case --author=<email>`.** `--author` alone is a case-sensitive regular expression matched anywhere in `Name <email>`. Measured on git 2.55, `--author=ann@corp.com` took in `joann@corp.com` and `ann@corpXcom` and missed `Ann@Corp.com`, so after the identity check passed, the reading step could still pull in a stranger's commits and drop the person's own. The anchored, fixed-string, case-blind form matched only the two spellings of the one address. The script still lists each address as written, so the person sees what they are confirming.
+
+Its checks are in `skills/whoami/tests/identity_tests.py`. Run them with `python plugins/whoami/skills/whoami/tests/identity_tests.py`.
 
 ## The prompt extractor
 

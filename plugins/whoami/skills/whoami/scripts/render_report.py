@@ -4,6 +4,7 @@
 
 The HTML is written to --out, and the Markdown summary is printed to stdout for the session.
 Exit status 2 means the document does not match the schema in report-schema.md, and nothing was written.
+Exit status 4 means the document's identities cannot be shown to be the person running it, and nothing was written.
 """
 
 import argparse
@@ -14,7 +15,10 @@ import os
 import re
 import sys
 
+import identity
+
 INVALID = 2
+NOT_THE_PERSON = identity.NOT_THE_PERSON
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # seven to forty hex characters holding both a digit and a letter, so words such as "facade" and numbers such as
 # "2026" do not match, bounded by lookarounds because CJK text puts no word boundary before a SHA
@@ -204,6 +208,13 @@ def validate(doc):
             problems.append("labels: %s missing; give every label or none" % ", ".join(missing))
 
     need(doc, "scope", "document", dict)
+
+    who = need(doc, "identity", "document", dict)
+    if who is not None:
+        for key in ("repositories", "addresses"):
+            values = need(who, key, "identity", list)
+            if values is not None and not all(isinstance(v, str) and v.strip() for v in values):
+                problems.append("identity: '%s' is not a list of text" % key)
     return problems
 
 
@@ -812,6 +823,18 @@ def main(argv=None):
         sys.stderr.write("the report does not match the schema, so nothing was written:\n")
         sys.stderr.write("".join("- %s\n" % p for p in problems))
         return INVALID
+
+    # the report is what does harm when it is passed on, so it is gated here as well as at the identity question
+    try:
+        seeds, candidates = identity.collect(doc["identity"]["repositories"])
+    except identity.NotARepository as error:
+        problems = ["not a git repository: %s" % error]
+    else:
+        problems = identity.check(seeds, candidates, doc["identity"]["addresses"])
+    if problems:
+        sys.stderr.write("the report is not about the person running this, so nothing was written:\n")
+        sys.stderr.write("".join("- %s\n" % p for p in problems))
+        return NOT_THE_PERSON
 
     lab = labels_for(doc)
     out_path = os.path.abspath(args.out)
