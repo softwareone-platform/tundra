@@ -1,4 +1,4 @@
-<!-- translated from README.md, source sha256 a40d3bfec579458112ed439e9e339d6430a67efb806ca4e8c1939272b7c156ae; see CLAUDE.md "Translations of the root README" before editing -->
+<!-- translated from README.md, source sha256 75de0b8f03095f15f5d7dccc3b5aa6075597aef81ec957e0ed4b9c91e139dc23; see CLAUDE.md "Translations of the root README" before editing -->
 # tundra
 
 <div align="center">
@@ -12,7 +12,7 @@
 SoftwareOne Platform 的 Claude Code plugin marketplace。
 
 <a id="install"></a>
-## 安装
+## 📦 安装
 
 ```
 /plugin marketplace add https://github.com/softwareone-platform/tundra.git
@@ -31,7 +31,7 @@ SoftwareOne Platform 的 Claude Code plugin marketplace。
 请使用上面完整的 HTTPS URL。`softwareone-platform/tundra` 这种简写也能用，但它通过 SSH clone，是不同的指令。
 
 <a id="what-is-in-it"></a>
-## 内容
+## 🗂️ 内容
 
 | Plugin | 提供什么 |
 |---|---|
@@ -89,8 +89,3 @@ SoftwareOne Platform 的 Claude Code plugin marketplace。
 </picture>
 
 [whoami 的完整说明（英文）](plugins/whoami/README.md)
-
-<a id="licence"></a>
-## 许可证
-
-Apache-2.0，涵盖 repo 中的所有内容。

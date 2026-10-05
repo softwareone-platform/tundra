@@ -10,7 +10,8 @@
 
 A Claude Code plugin marketplace for SoftwareOne Platform.
 
-## Install
+<a id="install"></a>
+## 📦 Install
 
 ```
 /plugin marketplace add https://github.com/softwareone-platform/tundra.git
@@ -28,7 +29,8 @@ Claude Code leaves auto-update off for a marketplace like this one, so you will 
 
 Use the full HTTPS URL above. The `softwareone-platform/tundra` shorthand is also accepted, but it clones over SSH, which is a different instruction.
 
-## What is in it
+<a id="what-is-in-it"></a>
+## 🗂️ What is in it
 
 | Plugin | What it gives you |
 |---|---|
@@ -86,7 +88,3 @@ Finds test gaps and writes or refreshes unit and integration tests. Every test c
 </picture>
 
 [Full details of whoami](plugins/whoami/README.md)
-
-## Licence
-
-Apache-2.0, covering everything in the repository.
