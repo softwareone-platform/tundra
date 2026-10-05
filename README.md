@@ -1,5 +1,13 @@
 # tundra
 
+<div align="center">
+
+[![Claude Code plugin marketplace](https://img.shields.io/badge/Claude%20Code-plugin%20marketplace-blue)](#install) [![License: Apache-2.0](https://img.shields.io/github/license/softwareone-platform/tundra)](LICENSE)
+
+[English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
+
+</div>
+
 A Claude Code plugin marketplace for SoftwareOne Platform.
 
 ## Install
@@ -70,7 +78,7 @@ Finds test gaps and writes or refreshes unit and integration tests. Every test c
 
 #### whoami
 
-`/whoami:whoami` reads the code that shipped under your name, whether you typed it or directed a model to, the prompts you gave Claude, and the instructions you left it in `CLAUDE.md`. It finds the patterns that recur, tests each against what could explain it away, and concludes what kind of question you reliably get right and what kind you reliably miss. The result is a self-contained HTML report that opens with a timeline of what the conclusion rests on. It reads only the repositories you point it at, code only through git, and your prompts and instructions only if you agree.
+`/whoami:whoami` reads the code that shipped under your name, whether you typed it or directed a model to, the prompts you gave Claude, and the instructions you left it in `CLAUDE.md`. It finds the patterns that recur, tests each against what could explain it away, and concludes what kind of question you reliably get right and what kind you reliably miss. The result is a self-contained HTML report that opens with a timeline of what the conclusion rests on. It reads only the repositories you point it at, code only through git, and your prompts and instructions only if you agree. It writes the report in whichever language you ask for.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="plugins/whoami/docs/report-overview-dark.png">

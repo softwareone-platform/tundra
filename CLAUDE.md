@@ -18,6 +18,8 @@ plugins/<name>/                     a plugin that lives in this repository
   README.md
   skills/, commands/, agents/
 scripts/sync-plugin-sources.py      pins every remote source to its ref's tip
+README.md                           the English README, translated by README.zh-TW.md and README.zh-CN.md
+docs/whoami/                        the translations' whoami screenshots
 LICENSE                             covers everything under the root
 ```
 
@@ -70,5 +72,9 @@ GitHub `owner/repo` shorthand is also accepted and clones over SSH by default, s
 Working notes live in `.claude/plans/`, which holds a `.gitignore` of its own that ignores the folder and itself. Nothing there is ever committed, and this repository is public, so that is the place for anything that must not be.
 
 `.gitattributes` pins the working tree to LF on every platform, `*.cmd` excepted.
+
+**Translations of the root README.** `README.md` is translated into `README.zh-TW.md` and `README.zh-CN.md`, and any edit to it makes both stale. Each translation's first line records the sha256 of the README it was made from. Nothing here checks that digest, so after an edit recompute it with `sha256sum README.md` and re-translate only the paragraphs that changed. The vocabulary follows issue-to-pr's `docs/translation-glossary.md`, so a term reads the same in both repositories. Code blocks, link targets and the language switcher stay as in the English, with two exceptions: a link into issue-to-pr's README goes to its translation in the same language, and a translated heading that a link points at carries the English `<a id>`, because a translated heading gets a different GitHub anchor. Plugin READMEs are not translated.
+
+The whoami screenshots in the translations live in `docs/whoami/` rather than the plugin folder, because the root README is their only reader and every install copies the plugin folder. They are rendered by the plugin's own renderer from a fictional report written in each language, which is what a real run asked for that language produces.
 
 Commit messages carry no prefix and no attribution trailer.
