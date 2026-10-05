@@ -1,0 +1,33 @@
+#!/bin/sh
+# This repository publishes by direct push to main and has no CI,
+# so a README.md edit whose translations were not updated is caught here or not at all.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+# Bypass deliberately:    git push --no-verify
+
+PY=""
+for candidate in python python3 py; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    PY="$candidate"
+    break
+  fi
+done
+
+if [ -z "$PY" ]; then
+  echo "pre-push: no Python on PATH, skipping the README translation check." >&2
+  exit 0
+fi
+
+ROOT="$(git rev-parse --show-toplevel)"
+ZERO="0000000000000000000000000000000000000000"
+STATUS=0
+
+# git passes one line per ref being pushed, and a deleted ref arrives as the all-zero sha
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$local_sha" = "$ZERO" ]; then
+    continue
+  fi
+  "$PY" "$ROOT/scripts/check-readme-translations.py" --rev "$local_sha" || STATUS=1
+done
+
+exit $STATUS
