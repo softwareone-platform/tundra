@@ -1,4 +1,4 @@
-<!-- translated from README.md, source sha256 75de0b8f03095f15f5d7dccc3b5aa6075597aef81ec957e0ed4b9c91e139dc23; see CLAUDE.md "Translations of the root README" before editing -->
+<!-- translated from README.md, source sha256 5d2e12f6ff28601b43624a519b159a27476b27268551c6c54de0227d5cf7b61e; see CLAUDE.md "Translations of the root README" before editing -->
 # tundra
 
 <div align="center">
@@ -33,59 +33,34 @@ SoftwareOne Platform 的 Claude Code plugin marketplace。
 <a id="what-is-in-it"></a>
 ## 🗂️ 内容
 
-| Plugin | 提供什么 |
-|---|---|
-| [`issue-to-pr-pipeline`](#issue-to-pr-pipeline) | 把一个工单从诊断带到经过审查的 pull request，串起下面三个 plugin |
-| [`disconfirm-first`](#disconfirm-first) | 对 issue、计划或已实现的修复进行对抗式审查 |
-| [`test-authoring`](#test-authoring) | 编写单元测试和集成测试，每个测试由一个 agent 编写、另一个 agent 检查 |
-| [`pr-lifecycle`](#pr-lifecycle) | 在 Azure DevOps 或 GitHub 上创建 pull request，并处理它的评审意见 |
-| [`whoami`](#whoami) | 根据你的代码、你的 prompt 和你的 CLAUDE.md 做一份自我评估，总结出你的工作方式，输出为 HTML 报告 |
+除了 `whoami`，每个 skill 都会在你用自己的话描述任务时启动，也都可以用 `/<plugin>:<skill>` 直接运行。
 
-### 来自 [issue-to-pr](https://github.com/softwareone-platform/issue-to-pr/blob/main/README.zh-CN.md)
+### 🔁 从工单到 pull request
 
-这四个 plugin 放在它们自己的 repo 中，并且一起发布。下面每一节都是该 plugin 自身文档的开头。
-
-#### issue-to-pr-pipeline
-
-`resolve-issue` 带着一个工单走完这些步骤：对 issue 进行事实核查、起草并强化计划、实现、编写测试、审查修复，以及创建 PR。它在任何代码变更之前会停下来等你批准计划，在创建 PR 之前也会再停一次。
-
-![resolve-issue-dashboard 正在展示一次运行到一半的 pipeline](https://raw.githubusercontent.com/softwareone-platform/issue-to-pr/main/docs/resolve-issue-dashboard.png)
-
-它把另外三个 plugin 声明为依赖，所以在 Claude Code v2.1.143 或更高版本上，安装它就会一并安装那三个：
+四个 plugin，把一个工单带到经过审查的 pull request。它们放在 [issue-to-pr](https://github.com/softwareone-platform/issue-to-pr/blob/main/README.zh-CN.md) 中，并且一起发布。`issue-to-pr-pipeline` 运行整个流程；在 Claude Code v2.1.143 或更高版本上，安装它就会一并安装另外三个，而那三个也都可以独立使用。
 
 ```
 /plugin install issue-to-pr-pipeline@tundra
 ```
 
-[issue-to-pr-pipeline 的完整说明](https://github.com/softwareone-platform/issue-to-pr/blob/main/README.zh-CN.md#issue-to-pr-pipeline)
+| Plugin | 做什么 | Skill |
+|---|---|---|
+| [`issue-to-pr-pipeline`](https://github.com/softwareone-platform/issue-to-pr/blob/main/README.zh-CN.md#issue-to-pr-pipeline) | 把一个工单从诊断带到经过审查的 pull request，批准计划前和创建 PR 前各停下来等你一次 | `resolve-issue`<br>`resolve-issue-dashboard`<br>`resolve-issue-learnings` |
+| [`disconfirm-first`](https://github.com/softwareone-platform/issue-to-pr/blob/main/README.zh-CN.md#disconfirm-first) | 在下一步以它为基础之前，对 issue、计划或已实现的修复进行对抗式审查 | `review-issue-fact`<br>`review-plan-risk`<br>`review-code-risk` |
+| [`test-authoring`](https://github.com/softwareone-platform/issue-to-pr/blob/main/README.zh-CN.md#test-authoring) | 找出测试缺口，编写单元测试和集成测试，每个测试都由独立的验证者检查 | `scan-test-gaps`<br>`add-unit-test`<br>`add-integration-test`<br>`update-unit-test`<br>`update-integration-test`<br>`setup-test-context` |
+| [`pr-lifecycle`](https://github.com/softwareone-platform/issue-to-pr/blob/main/README.zh-CN.md#pr-lifecycle) | 在 Azure DevOps 或 GitHub 上按你以往 PR 的风格创建 pull request，并处理它的评审意见 | `open-pr`<br>`resolve-pr-comments` |
 
-#### disconfirm-first
+![resolve-issue-dashboard 正在展示一次运行到一半的 pipeline](https://raw.githubusercontent.com/softwareone-platform/issue-to-pr/main/docs/resolve-issue-dashboard.png)
 
-三个对抗式审查者，每个层级一个：`review-issue-fact` 在规划修复之前对照代码库检查 issue，`review-plan-risk` 对计划或规格进行事前验尸，`review-code-risk` 在 PR 创建之前质疑已实现的修复。
+### 🪞 你的工作方式
 
-[disconfirm-first 的完整说明](https://github.com/softwareone-platform/issue-to-pr/blob/main/README.zh-CN.md#disconfirm-first)
+| Plugin | 做什么 | Skill |
+|---|---|---|
+| [`whoami`](plugins/whoami/README.md) | 根据你的代码、你的 prompt 和你的 CLAUDE.md 做一份自我评估，输出为 HTML 报告 | `/whoami:whoami`，只有你能启动 |
 
-#### test-authoring
-
-找出测试缺口，编写或刷新单元测试和集成测试。每个测试都出自一个编写者 agent，它会学习最接近的相邻测试的约定，再由一个独立的验证者检查。不会有任何东西被复制到你的 repo。
-
-[test-authoring 的完整说明](https://github.com/softwareone-platform/issue-to-pr/blob/main/README.zh-CN.md#test-authoring)
-
-#### pr-lifecycle
-
-`open-pr` 创建一个 PR，标题和描述遵循你自己以往的 PR；`resolve-pr-comments` 逐一判断如何处理一个 PR 的评审讨论，并起草修复和回复。两者都会先让你看到它们要做什么，等你同意之后，才会在你的电脑之外做任何变更。
-
-[pr-lifecycle 的完整说明](https://github.com/softwareone-platform/issue-to-pr/blob/main/README.zh-CN.md#pr-lifecycle)
-
-### 来自这个 repo
-
-#### whoami
-
-`/whoami:whoami` 读取以你的名义交付的代码（无论是你亲手敲的，还是你指挥模型写的）、你给 Claude 的 prompt，以及你在 `CLAUDE.md` 里留给它的指令。它找出反复出现的模式，并逐一检验有没有其他原因能解释它，再总结出哪一类问题你稳定做对、哪一类问题你稳定漏掉。结果是一份单个文件、不依赖外部资源的 HTML 报告，开头是一条时间线，显示这个结论建立在哪些材料之上。它只读你指定的 repo，代码只通过 git 读取，你的 prompt 和指令也只在你同意之后才会读。报告会用你要求的语言撰写。
+它读取以你的名义交付的代码、你给 Claude 的 prompt，以及你的 `CLAUDE.md`，逐一检验每个反复出现的模式有没有其他原因能解释，再总结出哪一类问题你稳定做对、哪一类问题你稳定漏掉。它只读你指定的 repo，你的 prompt 和指令也只在你同意之后才会读。报告会用你要求的语言撰写。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/whoami/report-overview-dark.zh-CN.png">
   <img alt="一份针对两个虚构 repo 的 whoami 报告：读取范围的时间线、只有一个轴的结论，以及一张流程图" src="docs/whoami/report-overview-light.zh-CN.png">
 </picture>
-
-[whoami 的完整说明（英文）](plugins/whoami/README.md)
