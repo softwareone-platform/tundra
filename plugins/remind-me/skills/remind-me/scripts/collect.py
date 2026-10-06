@@ -9,7 +9,7 @@ because a pull request a session left in review is often merged the same afterno
 Usage:
     python collect.py [--day YYYY-MM-DD] [--out digest.json] [--no-live]
 
-Without --day, the day is the most recent one before today that has sessions,
+Without --day, the day is the most recent one before today with a prompt typed in an interactive session,
 so a Monday run reports the Friday before.
 Exit status 3 means no session was active that day.
 """
@@ -24,19 +24,18 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.parse
 
 EXIT_OK = 0
 EXIT_NO_SESSIONS = 3
 
 PROMPT_LIMIT = 600
-SUMMARY_LIMIT = 4000
+SUMMARY_HEAD = 1000
+SUMMARY_TAIL = 3000
 QUESTION_TAIL = 700
 LAST_TAIL = 1500
-MAX_PROMPTS = 80
-COMMAND_LIMIT = 160
+LATER_PROMPTS = 20
 LIVE_TIMEOUT = 60
-# a pause longer than this splits a session into separate stretches of activity
-ACTIVE_GAP_MINUTES = 30
 
 COMPACTION_PREFIX = "This session is being continued from a previous conversation"
 NOISE_PREFIXES = ("<local-command", "<task-notification>", "<bash-input>", "<bash-stdout>", "<bash-stderr>")
@@ -66,11 +65,6 @@ AZURE_REMOTE = (
 )
 LOOKUP_WORKERS = 8
 USAGE_FIELDS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
-GIT_ACTIONS = (
-    ("commit", re.compile(r"\bgit\b[^\n|;&]*\bcommit\b")),
-    ("push", re.compile(r"\bgit\b[^\n|;&]*\bpush\b")),
-    ("pr-create", re.compile(r"\baz repos pr create\b|\bgh pr create\b")),
-)
 SHELL_TOOLS = ("Bash", "PowerShell")
 
 
@@ -106,10 +100,31 @@ def days_in(path):
     return found
 
 
+def work_days(path):
+    """The local days a transcript holds a typed prompt in an interactive session: the days a report keeps."""
+    found = set()
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if '"type":"user"' not in line:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if entry.get("entrypoint") == "sdk-cli":
+                return set()
+            when = local_time(entry.get("timestamp", ""))
+            prompt = typed_prompt(entry)
+            if when and prompt and not invokes_remind_me(prompt[1]):
+                found.add(when[0])
+    return found
+
+
 def default_day(paths, today):
+    # a day holding only `claude -p` runs or a run of this skill would report nothing, while the day before has work
     earlier = set()
     for path in paths:
-        earlier.update(day for day in days_in(path) if day < today)
+        earlier.update(day for day in work_days(path) if day < today)
     return max(earlier) if earlier else None
 
 
@@ -135,7 +150,10 @@ def typed_prompt(entry):
     if not text or text.startswith(NOISE_PREFIXES):
         return None
     if text.startswith(COMPACTION_PREFIX):
-        return "summary", text[:SUMMARY_LIMIT]
+        # a compaction summary ends with what was still pending and the next step, which is what this report is for
+        if len(text) > SUMMARY_HEAD + SUMMARY_TAIL:
+            text = text[:SUMMARY_HEAD] + "\n[...]\n" + text[-SUMMARY_TAIL:]
+        return "summary", text
     command = COMMAND_NAME.search(text)
     if command:
         args = COMMAND_ARGS.search(text)
@@ -199,26 +217,6 @@ def subagent_usage(path, day, totals):
                     add_usage(totals, seen, entry)
 
 
-def git_actions(command):
-    return [kind for kind, pattern in GIT_ACTIONS if pattern.search(command)]
-
-
-def minutes(clock):
-    hours, mins = clock.split(":")
-    return int(hours) * 60 + int(mins)
-
-
-def stretches(clocks):
-    """The session's stretches of activity: its first and last entries alone draw a session left open over lunch as a day of work."""
-    found = []
-    for clock in sorted(clocks):
-        if found and minutes(clock) - minutes(found[-1][1]) <= ACTIVE_GAP_MINUTES:
-            found[-1][1] = clock
-        else:
-            found.append([clock, clock])
-    return found
-
-
 def result_text(content):
     """A tool result as text, its text blocks as written: serialising them would escape the quotes a pattern looks for."""
     if isinstance(content, str):
@@ -240,15 +238,13 @@ def read_session(path, day):
         "last": None,
         "prompts": [],
         "questions": [],
-        "actions": [],
         "pull_requests": [],
         "pull_requests_new": [],
         "last_reply": None,
+        "later_prompts": [],
         "usage": {},
-        "active": [],
     }
     seen_usage = set()
-    clocks = []
     branches = []
     prs = set()
     replies = []
@@ -259,10 +255,15 @@ def read_session(path, day):
             except ValueError:
                 continue
             when = local_time(entry.get("timestamp", ""))
+            if when and when[0] > day and entry.get("type") == "user" and len(session["later_prompts"]) < LATER_PROMPTS:
+                # an answer given after the day still settles what the day left open: the report is as of now
+                later = typed_prompt(entry)
+                if later and not invokes_remind_me(later[1]):
+                    session["later_prompts"].append({"day": when[0], "at": when[1], "kind": later[0], "text": later[1]})
+                continue
             if not when or when[0] != day:
                 continue
             clock = when[1]
-            clocks.append(clock)
             session["first"] = session["first"] or clock
             session["last"] = clock
             session["cwd"] = entry.get("cwd") or session["cwd"]
@@ -288,21 +289,14 @@ def read_session(path, day):
                     elif block.get("type") == "tool_use" and block.get("name") in SHELL_TOOLS:
                         command = (block.get("input") or {}).get("command", "")
                         prs.update(pull_requests(command))
-                        for action in git_actions(command):
-                            session["actions"].append({"at": clock, "kind": action, "command": command[:COMMAND_LIMIT]})
     if session["first"] is None:
         return None
-    session["active"] = stretches(clocks)
     subagent_usage(path, day, session["usage"])
     session["branches"] = branches
     session["pull_requests"] = sorted(prs)
     session["questions"] = [{"at": clock, "text": text[-QUESTION_TAIL:]} for clock, text in replies if is_question(text)]
     if replies:
         session["last_reply"] = {"at": replies[-1][0], "text": replies[-1][1][-LAST_TAIL:]}
-    if len(session["prompts"]) > MAX_PROMPTS:
-        # the opening states the topic and the end states where it stopped, so the middle goes first
-        keep = session["prompts"]
-        session["prompts"] = keep[:10] + [{"at": None, "kind": "elided", "text": "%d prompts left out" % (len(keep) - MAX_PROMPTS)}] + keep[-(MAX_PROMPTS - 10):]
     return session
 
 
@@ -351,8 +345,8 @@ def pull_request_state(key, organisations):
         reason = "not found"
         for organisation in organisations:
             ok, out = run(["az", "repos", "pr", "show", "--id", ref, "--org", organisation, "-o", "json", "--query",
-                           "{status:status,title:title,target:targetRefName,created:creationDate,closed:closedDate,"
-                           "author:createdBy.displayName,repository:repository.name}"])
+                           "{status:status,title:title,source:sourceRefName,target:targetRefName,created:creationDate,"
+                           "closed:closedDate,author:createdBy.uniqueName,repository:repository.name}"])
             if ok:
                 break
             reason = out
@@ -360,7 +354,7 @@ def pull_request_state(key, organisations):
             return {"status": "unknown", "reason": reason}
     else:
         repo, _, number = ref.partition("#")
-        ok, out = run(["gh", "pr", "view", number, "-R", repo, "--json", "state,title,baseRefName,createdAt,closedAt,mergedAt,url,author"])
+        ok, out = run(["gh", "pr", "view", number, "-R", repo, "--json", "state,title,headRefName,baseRefName,createdAt,closedAt,mergedAt,url,author"])
         if not ok:
             return {"status": "unknown", "reason": out}
     try:
@@ -371,7 +365,19 @@ def pull_request_state(key, organisations):
     if "createdAt" in state:
         state["created"] = state.pop("createdAt")
         state["author"] = (state.get("author") or {}).get("login")
+        state["source"] = state.pop("headRefName", None)
+    if (state.get("source") or "").startswith("refs/heads/"):
+        state["source"] = state["source"][len("refs/heads/"):]
     return state
+
+
+def same_repository(key, state, remote):
+    """Whether a pull request belongs to the repository behind a remote, by the name each platform gives it."""
+    path = urllib.parse.unquote(re.sub(r"\.git$", "", (remote or "").rstrip("/"))).replace(":", "/").lower().split("/")
+    if key.startswith("github:"):
+        return "/".join(path[-2:]) == key[len("github:"):].partition("#")[0].lower()
+    name = (state.get("repository") or "").lower()
+    return bool(name) and path[-1] == name
 
 
 def created_on(state, day):
@@ -404,15 +410,36 @@ def live_state(root, sessions):
         exists, _ = run(["git", "-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch])
         entry["local"] = exists
         if exists:
+            # remote-tracking refs are as fresh as the clone's last fetch: nothing here fetches
             remote, _ = run(["git", "-C", root, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/" + branch])
             entry["on_remote"] = remote
-            if remote:
-                ok, out = run(["git", "-C", root, "rev-list", "--count", "origin/%s..%s" % (branch, branch)])
-                entry["unpushed"] = count(out) if ok else None
+            ok, out = run(["git", "-C", root, "rev-list", "--count", "refs/heads/" + branch, "--not", "--remotes"])
+            entry["unpushed"] = count(out) if ok else None
         state["branches"].append(entry)
     ok, remote = run(["git", "-C", root, "remote", "get-url", "origin"])
-    state["remote"] = remote.strip() if ok else None
+    state["remote"] = re.sub(r"^(\w+://)[^/@]+@", r"\1", remote.strip()) if ok else None
+    ok, email = run(["git", "-C", root, "config", "user.email"])
+    state["email"] = email.strip() if ok and email.strip() else None
     return state
+
+
+def identities(digest):
+    """Who the person is on each platform: the accounts the CLIs are signed in as, and the repositories' git emails.
+
+    The CLI account is the one that opens and reads the pull requests; a git email can differ from it,
+    and on GitHub it is often a noreply address, so it only adds to the set.
+    """
+    found = {group["live"]["email"].lower() for group in digest["repositories"] if (group.get("live") or {}).get("email")}
+    keys = digest.get("pull_requests", {})
+    if any(key.startswith("azure:") for key in keys):
+        ok, out = run(["az", "account", "show", "--query", "user.name", "-o", "tsv"])
+        if ok and out.strip():
+            found.add(out.strip().lower())
+    if any(key.startswith("github:") for key in keys):
+        ok, out = run(["gh", "api", "user", "--jq", ".login"])
+        if ok and out.strip():
+            found.add(out.strip().lower())
+    return sorted(found)
 
 
 def running_sessions():
@@ -434,7 +461,7 @@ def collect(day, live=True, root=None, today=None):
     paths = transcripts(root)
     today = today or datetime.date.today().isoformat()
     day = day or default_day(paths, today)
-    digest = {"day": day, "timezone": datetime.datetime.now().astimezone().strftime("%z"),
+    digest = {"day": day,
               "generated": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
               "left_out": {"headless": 0}, "repositories": [], "pull_requests": {}}
     if not day:
@@ -453,6 +480,8 @@ def collect(day, live=True, root=None, today=None):
             continue
         if not session["prompts"]:
             continue
+        # the entrypoint only decides what is left out, so it is not part of what the model reads
+        del session["entrypoint"]
         session["running"] = running.get(session["id"])
         repository = repository_root(session["cwd"])
         key = repository or session["cwd"] or "(unknown folder)"
@@ -475,12 +504,29 @@ def collect(day, live=True, root=None, today=None):
         with concurrent.futures.ThreadPoolExecutor(max_workers=LOOKUP_WORKERS) as pool:
             states = list(pool.map(lambda key: pull_request_state(key, organisations), keys))
         digest["pull_requests"] = dict(zip(keys, states))
+        digest["identities"] = identities(digest)
+        merged = [(key, state) for key, state in digest["pull_requests"].items()
+                  if state.get("source") and state.get("status") in ("completed", "merged")]
+        for group in digest["repositories"]:
+            remote = (group.get("live") or {}).get("remote")
+            for branch in (group.get("live") or {}).get("branches", []):
+                # a branch name alone says nothing across repositories: one ticket's branch can carry the same name in two of them
+                key = next((key for key, state in merged if state["source"] == branch["name"] and same_repository(key, state, remote)), None)
+                if key:
+                    # a merged branch's commits reach no remote ref in a clone that has not fetched since,
+                    # so they would read as unpushed work
+                    branch["merged_by"] = key
+                    branch["unpushed"] = None
         # a session also names old pull requests it labelled or compared against, so the new ones are those created that day,
-        # by the platform's own record; one session can name another session's new pull request, so this is no claim of who opened it
+        # by the platform's own record, and by the person: a colleague's pull request named that day is not the person's work.
+        # one session can name another session's new pull request, so this is no claim of which session opened it
+        mine = set(digest["identities"])
         for group in digest["repositories"]:
             for session in group["sessions"]:
-                session["pull_requests_new"] = [key for key in session["pull_requests"]
-                                                   if created_on(digest["pull_requests"].get(key, {}), day)]
+                session["pull_requests_new"] = [
+                    key for key in session["pull_requests"]
+                    if created_on(digest["pull_requests"].get(key, {}), day)
+                    and (not mine or (digest["pull_requests"][key].get("author") or "").lower() in mine)]
     return digest
 
 
@@ -511,9 +557,7 @@ def main(argv=None):
         sys.stdout.reconfigure(encoding="utf-8")
         print(text)
     if not digest["repositories"]:
-        # nothing found can also mean the transcripts are gone: Claude Code deletes them after cleanupPeriodDays
-        print("no sessions on %s; Claude Code deletes transcripts after cleanupPeriodDays, 30 days by default"
-              % (digest["day"] or "any day before today"), file=sys.stderr)
+        print("no sessions on %s" % (digest["day"] or "any day before today"), file=sys.stderr)
         return EXIT_NO_SESSIONS
     return EXIT_OK
 

@@ -11,6 +11,7 @@ Exits non-zero on any failure. Run from anywhere:
 """
 
 import copy
+import html
 import io
 import json
 import os
@@ -215,14 +216,22 @@ def test_tokens():
 
 def test_compact():
     cases = [(0, "0"), (999, "999"), (1000, "1k"), (1500, "1.5k"), (12340, "12.3k"),
-             (2000000, "2M"), (2340000, "2.3M"), (1000000000, "1B"), (4560000000, "4.6B")]
+             (2000000, "2M"), (2340000, "2.3M"), (4300000, "4.3M"),
+             (1000000000, "1B"), (2500000000, "2.5B"), (4560000000, "4.6B")]
     for number, want in cases:
         check("compact(%d)" % number, render.compact(number), want)
     # the unit is chosen after rounding to one decimal, so a number that rounds to 1000 of one unit reads as 1 of the next
-    boundaries = [(999949, "999.9k"), (999950, "1M"), (999999, "1M"), (4300000, "4.3M"),
-                  (999999999, "1B"), (2500000000, "2.5B")]
+    boundaries = [(999949, "999.9k"), (999950, "1M"), (999999, "1M"), (999999999, "1B")]
     for number, want in boundaries:
         check("compact(%d) at a unit boundary" % number, render.compact(number), want)
+
+
+def test_compact_top_unit():
+    # by hand: 1234567890000 / 1000 three times is 1234.56789, and B is the last unit, so the loop stops there
+    check("past B stays in B", render.compact(1234567890000), "1234.6B")
+    # by hand: 999999999999 is 999.999999999B, which rounds to 1000.0 but has no unit above B to move to
+    check("rounding to 1000B does not move past B", render.compact(999999999999), "1000B")
+    check("exactly a thousand B", render.compact(1000000000000), "1000B")
 
 
 def test_figures():
@@ -437,6 +446,155 @@ def test_bars_carry_no_count():
     check("bars have no text", [text for _, _, text in bars], ["", ""])
 
 
+# ----- repository and session panels ---------------------------------------------
+
+def _repository_panel(**group_extra):
+    """The r-0 panel of a page with one repository, its group varied by the given fields."""
+    digest = _digest([_group_of("repo-a", [_session("s1")], **group_extra)])
+    return _panel(render.page(_report(), digest), "r-0")
+
+
+def _unread_chip(title):
+    return '<span class="chip warn" title="%s">[state_unread]</span>' % title
+
+
+def test_repository_state_unread():
+    panel = _repository_panel(is_repository=True, live={"uncommitted": None, "notes": ["git status failed: x"], "branches": []})
+    check("an unread repository is marked, its note as the title", _unread_chip("git status failed: x") in panel, True)
+
+    # collect.py --no-live writes no live key, so nothing about the repository was read
+    panel = _repository_panel(is_repository=True)
+    check("a repository with no live state is marked with an empty title", _unread_chip("") in panel, True)
+
+    panel = _repository_panel(is_repository=True, live={"uncommitted": 0, "notes": [], "branches": []})
+    check("a clean repository is not marked unread", "[state_unread]" in panel, False)
+    check("a clean repository shows no uncommitted chip", "[uncommitted]" in panel, False)
+
+    for name, extra in (("is_repository False", {"is_repository": False}), ("is_repository absent", {})):
+        check("a plain folder is not marked unread (%s)" % name, "[state_unread]" in _repository_panel(**extra), False)
+
+    panel = _repository_panel(is_repository=True, live={"uncommitted": None, "notes": ["first", "second"], "branches": []})
+    check("two notes are joined with a semicolon", _unread_chip("first; second") in panel, True)
+
+    panel = _repository_panel(is_repository=True, live={"uncommitted": None, "notes": ['say "hi" <script>x</script>'], "branches": []})
+    check("a note is escaped in the title attribute",
+          _unread_chip("say &quot;hi&quot; &lt;script&gt;x&lt;/script&gt;") in panel, True)
+    check("no raw markup from a note", "<script>x</script>" in panel, False)
+
+    # collect.py writes a note only when git status fails today, but any note marks the repository, count or not
+    panel = _repository_panel(is_repository=True, live={"uncommitted": 2, "notes": ["git log failed"], "branches": []})
+    check("notes with a count still mark the repository unread", _unread_chip("git log failed") in panel, True)
+    check("and the count is shown beside it", '<span class="chip warn">[uncommitted] 2</span>' in panel, True)
+
+
+def test_repository_live_chips():
+    live = {"current_branch": "main", "uncommitted": 3,
+            "branches": [{"unpushed": 2}, {"unpushed": None}, {"unpushed": 1}]}
+    panel = _repository_panel(is_repository=True, live=live)
+    check("the current branch is a chip", '<span class="chip">main</span>' in panel, True)
+    check("uncommitted is counted", '<span class="chip warn">[uncommitted] 3</span>' in panel, True)
+    # by hand: 2 + 0 + 1, a branch whose count is unknown adding nothing
+    check("unpushed is summed over branches", '<span class="chip warn">[unpushed] 3</span>' in panel, True)
+    check("a readable repository is not marked unread", "[state_unread]" in panel, False)
+
+    zero = {"current_branch": "main", "uncommitted": 0, "branches": [{"unpushed": 0}, {"unpushed": None}]}
+    panel = _repository_panel(is_repository=True, live=zero)
+    check("no uncommitted chip at zero", "[uncommitted]" in panel, False)
+    check("no unpushed chip at zero", "[unpushed]" in panel, False)
+
+
+def _copied(panel):
+    return [html.unescape(value) for value in re.findall(r'data-copy="([^"]*)"', panel)]
+
+
+def _links(panel):
+    return [html.unescape(value) for value in re.findall(r'<a class="btn" href="([^"]*)"', panel)]
+
+
+def test_each_button_lives_in_one_place():
+    cwd = _folder("repo-a")
+    page = render.page(_report(), _digest())
+    session = _panel(page, "s-s1")
+    check("a stopped session has one link", session.count("<a "), 1)
+    check("and one button", session.count("<button"), 1)
+    check("the link resumes the session in its folder", _links(session), [render.deep_link(cwd, "/resume s1")])
+    check("the button copies the resume command", _copied(session), [render.resume_command(cwd, "s1")])
+    for label in ("[new_session]", "[copy_terminal]", "[copy_path]"):
+        check("the session panel has no %s" % label, label in session, False)
+
+    repository = _panel(page, "r-0")
+    for label in ("[new_session]", "[copy_terminal]", "[copy_path]"):
+        check("the repository panel has %s" % label, label in repository, True)
+    check("the repository links resume the last session and open a new one",
+          _links(repository), [render.deep_link(cwd, "/resume s1"), render.deep_link(cwd)])
+    check("the repository copies the resume command, the terminal command and the path",
+          _copied(repository), [render.resume_command(cwd, "s1"), render.terminal_command(cwd), cwd])
+
+
+def test_session_meta():
+    usage = {"model": {"input_tokens": 1200, "cache_creation_input_tokens": 300,
+                       "cache_read_input_tokens": 900, "output_tokens": 2500000}}
+    # a stretch list from an older digest, which the panel must no longer print
+    session = _session("s1", usage=usage, active=[["09:05", "09:20"], ["09:41", "09:55"]])
+    labels = _labels()
+    # a label the renderer no longer reads, so its absence below is a real check
+    labels["active"] = "[active]"
+    page = render.page(_report(labels=labels), _digest([_group_of("repo-a", [session])]))
+    panel = _panel(page, "s-s1")
+    # by hand: charged = 1200 + 300 = 1500, which is 1.5k, and output 2500000 is 2.5M
+    # cache reads stay out of the charged figure, and 900 is large enough that counting them would show 2.4k
+    check("meta is charged tokens, output and the id",
+          '<p class="meta"><span>1.5k [tokens]</span><span>2.5M [output]</span><span>s1</span></p>' in panel, True)
+    check("no active label on the page", "[active]" in page, False)
+    check("no stretch times on the page", ["09:05" in page, "09:41" in page], [False, False])
+
+
+# ----- the token mix -------------------------------------------------------------
+
+def _legend(page):
+    return re.findall(r'<span><i style="background:var\(--mix-(\w+)\)"></i>(.*?)</span>', page)
+
+
+def _widths(page):
+    return re.findall(r'<span style="width:([0-9.]+%);background:var\(--mix-(\w+)\)"></span>', page)
+
+
+def test_token_mix():
+    s1 = _session("s1", usage={"model": {"input_tokens": 50, "cache_creation_input_tokens": 100,
+                                         "cache_read_input_tokens": 500, "output_tokens": 25}})
+    s2 = _session("s2", first="11:00", last="12:00",
+                  usage={"model": {"cache_creation_input_tokens": 50, "cache_read_input_tokens": 100, "output_tokens": 25}})
+    page = render.page(_report({"s1": _body(), "s2": _body()}), _digest([_group_of("repo-a", [s1, s2])]))
+    # by hand: read 600, write 150, fresh 50, out 50, so whole is 850
+    # widths 100*x/850 to three decimals, 70.588 17.647 5.882 5.882, and shares to one decimal, 70.6 17.6 5.9 5.9
+    check("the bar is in read, write, fresh, out order with its widths", _widths(page),
+          [("70.588%", "read"), ("17.647%", "write"), ("5.882%", "fresh"), ("5.882%", "out")])
+    check("the legend names each part by its label, with its count and share", _legend(page),
+          [("read", "[cache_read] 600 (70.6%)"), ("write", "[cache_write] 150 (17.6%)"),
+           ("fresh", "[uncached_input] 50 (5.9%)"), ("out", "[output] 50 (5.9%)")])
+    for literal in ("cache read", "cache write", "uncached input"):
+        check("no English literal %r" % literal, literal in page, False)
+
+
+def test_token_mix_label_escaped():
+    labels = _labels()
+    labels["cache_read"] = 'cr <b>"x"</b>'
+    page = render.page(_report(labels=labels), _digest())
+    check("the legend label is escaped",
+          '</i>cr &lt;b&gt;&quot;x&quot;&lt;/b&gt; 100 (' in page, True)
+    check("no raw markup from the label", 'cr <b>"x"</b>' in page, False)
+
+
+def test_token_mix_zero_usage():
+    zero = {"input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 0}
+    for name, usage in (("every bucket zero", {"model": zero}), ("no buckets", {})):
+        # whole falls back to 1, so every part is 0 / 1 rather than a division by zero
+        page = render.page(_report(), _digest([_group_of("repo-a", [_session("s1", usage=usage)])]))
+        check("every width is zero (%s)" % name, [width for width, _ in _widths(page)], ["0.000%"] * 4)
+        check("every share is zero (%s)" % name, [text for _, text in _legend(page)],
+              ["[cache_read] 0 (0.0%)", "[cache_write] 0 (0.0%)", "[uncached_input] 0 (0.0%)", "[output] 0 (0.0%)"])
+
+
 # ----- the session summary -------------------------------------------------------
 
 def test_summary():
@@ -538,12 +696,15 @@ def test_script_on_cp1252_console():
 _TESTS = (test_valid_report_has_no_problems, test_missing_top_level_fields, test_day_not_the_digests,
           test_missing_labels, test_session_not_in_digest, test_digest_session_without_entry,
           test_session_without_topics, test_open_item_kind_and_text,
-          test_tokens, test_compact, test_figures, test_figures_on_page,
+          test_tokens, test_compact, test_compact_top_unit, test_figures, test_figures_on_page,
           test_windows_detection, test_resume_command, test_terminal_command, test_deep_link,
           test_rows_for, test_ordered,
           test_page_escapes_transcript_text, test_running_session_has_no_resume, test_repository_resume_last,
           test_current_repository_marked, test_overview_folds_past_limit, test_overview_empty,
           test_bars_carry_no_count,
+          test_repository_state_unread, test_repository_live_chips, test_each_button_lives_in_one_place,
+          test_session_meta,
+          test_token_mix, test_token_mix_label_escaped, test_token_mix_zero_usage,
           test_summary, test_summary_repositories_in_order,
           test_main_refuses_invalid_report, test_main_writes_page, test_script_on_cp1252_console)
 

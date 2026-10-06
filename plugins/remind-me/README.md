@@ -1,6 +1,6 @@
 # remind-me
 
-What you left open in the Claude Code sessions you ran on a given day, grouped by repository and checked against the live state of every pull request and branch they touched, with a way back into each session in its own folder.
+What you left open in the Claude Code sessions you ran on a given day, grouped by repository and checked against the live state of the pull requests and branches they named, with a way back into each session in its own folder.
 
 ```
 /plugin install remind-me@tundra
@@ -14,7 +14,7 @@ You get a summary in the session, and an HTML page that opens in your browser: t
 
 ## What it reads
 
-It reads the transcripts Claude Code keeps on this machine under `~/.claude/projects`, for every repository you worked in that day, and nothing leaves the machine. It runs `git` in each of those repositories, and `az` or `gh` to look up the pull requests the sessions named. Without `az` or `gh`, or without a login, a pull request's state is reported as unknown. The digest and the reports are written to the plugin's own data folder. Claude Code deletes transcripts older than `cleanupPeriodDays`, 30 days by default, so a day older than that cannot be reported; set it higher in `~/.claude/settings.json` to look further back.
+It reads the transcripts Claude Code keeps on this machine under `~/.claude/projects`, for every repository you worked in that day, and nothing leaves the machine. It runs `git` in each of those repositories, and `az` or `gh` to look up the pull requests the sessions named. Without `az` or `gh`, or without a login, a pull request's state is reported as unknown. The reports are written to the plugin's own data folder; the digest the report is built from, which holds excerpts of your transcripts, is deleted once the report is rendered. Claude Code deletes transcripts older than `cleanupPeriodDays`, 30 days by default, so a day older than that cannot be reported; set it higher in `~/.claude/settings.json` to look further back.
 
 ## Requirements
 

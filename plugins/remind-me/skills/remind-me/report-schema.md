@@ -1,6 +1,6 @@
 # The remind-me report document
 
-One JSON object, written by the model and read by `scripts/render.py` together with the collector's digest. It holds only what needs judgement. Times, token usage, pull request states, folders and the commands that reopen a session all come from the digest, so a figure on the page is never the model's.
+One JSON object, written by the model and read by `scripts/render.py` together with the collector's digest. It holds only what needs judgement. The page's figures, the timeline's times, token usage, folders and the commands that reopen a session all come from the digest. The model writes the headline and the item text, and copies each item's `since` from the digest.
 
 ```json
 {
@@ -21,7 +21,7 @@ One JSON object, written by the model and read by `scripts/render.py` together w
 ```
 
 - `day` is the digest's day.
-- `headline` carries no counts. The figures under it come from the digest, and a number the model writes is the one figure on the page nothing checks.
+- `headline` carries no counts. The figures under it come from the digest, and a number the model writes there, as in any item's text, is one nothing checks; above the figures it would read as one of them.
 - `language` is a BCP 47 tag such as `en` or `zh-TW`, and it sets the page's `lang`.
 - `sessions` has one entry for every session in the digest, keyed by its id, and none for a session the digest does not have.
 - `topics` has at least one entry. `done` and `open` may be empty.
@@ -37,7 +37,7 @@ Every label is required, in the report's language.
 | `repositories` | repositories |
 | `prompts` | prompts |
 | `pull_requests` | new pull requests completed |
-| `tokens` | input tokens (uncached) |
+| `tokens` | input tokens (not from cache) |
 | `tokens_cached` | input tokens (cached) |
 | `output` | output tokens |
 | `open` | open |
@@ -53,6 +53,9 @@ Every label is required, in the report's language.
 | `copy_terminal` | copy terminal command |
 | `copy_path` | copy path |
 | `show_all` | Show all |
+| `cache_read` | cache read |
+| `cache_write` | cache write |
+| `uncached_input` | uncached input |
 | `copied` | copied |
 | `theme` | theme |
 | `theme_light` | Light |
@@ -64,7 +67,7 @@ Every label is required, in the report's language.
 | `language_hint` | To read this in another language, name it in the request, for example "in German". |
 | `resume_last` | resume the last session |
 | `here` | you are here |
-| `active` | active |
+| `state_unread` | state not read |
 | `session_list` | sessions |
 | `decision` | decide |
 | `action` | do |

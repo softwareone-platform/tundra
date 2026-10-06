@@ -25,7 +25,7 @@ EXIT_SCHEMA = 2
 LABELS = ("sessions", "repositories", "prompts", "pull_requests", "tokens", "tokens_cached", "output",
           "open", "done", "topics", "actions", "running", "all_open", "timeline_hint",
           "resume", "copy_resume", "new_session", "copy_terminal", "copied", "theme", "theme_light", "theme_dark",
-          "uncommitted", "unpushed", "nothing_open", "as_of", "language_hint", "resume_last", "here", "active", "session_list", "copy_path", "show_all",
+          "uncommitted", "unpushed", "nothing_open", "as_of", "language_hint", "resume_last", "here", "state_unread", "session_list", "copy_path", "show_all", "cache_read", "cache_write", "uncached_input",
           "decision", "action", "question")
 KINDS = ("decision", "action", "question")
 # a kind with more open items than this shows its first ones and folds the rest behind a button
@@ -173,10 +173,6 @@ def minutes(clock):
     return int(hours) * 60 + int(mins)
 
 
-def stretches(session):
-    return session.get("active") or [[session["first"], session["last"]]]
-
-
 def rows_for(group):
     """Sessions that ran at the same time get a row each, so no bar hides another."""
     rows = []
@@ -226,11 +222,10 @@ def section(title, content):
 def session_panel(group, session, report, labels):
     body = body_of(report, session)
     usage = tokens(session["usage"].values())
-    times = ", ".join("%s&ndash;%s" % (e(a), e(b)) for a, b in stretches(session))
-    head = ('<header class="panel-head"><h2>%s <span class="span">%s&ndash;%s</span></h2>%s%s<p class="meta"><span>%s %s</span><span>%s %s</span><span>%s %s</span><span>%s</span></p></header>'
+    head = ('<header class="panel-head"><h2>%s <span class="span">%s&ndash;%s</span></h2>%s%s<p class="meta"><span>%s %s</span><span>%s %s</span><span>%s</span></p></header>'
             % (e(name_of(group)), e(session["first"]), e(session["last"]), counts(body.get("open", []), labels),
                '<span class="chip live">%s</span>' % e(labels["running"]) if session.get("running") else "",
-               e(labels["active"]), times, compact(usage["charged"]), e(labels["tokens"]), compact(usage["output"]), e(labels["output"]), e(session["id"])))
+               compact(usage["charged"]), e(labels["tokens"]), compact(usage["output"]), e(labels["output"]), e(session["id"])))
     parts = [head,
              section(labels["topics"], '<ul class="topics">%s</ul>' % "".join("<li>%s</li>" % e(topic) for topic in body["topics"])),
              section(labels["open"], open_list([(item, None) for item in body.get("open", [])], labels))]
@@ -239,10 +234,7 @@ def session_panel(group, session, report, labels):
     if session.get("cwd") and not session.get("running"):
         resume = resume_command(session["cwd"], session["id"])
         actions = (button_link(deep_link(session["cwd"], "/resume " + session["id"]), labels["resume"], session["cwd"])
-                   + copy_button(resume, labels["copy_resume"], labels)
-                   + button_link(deep_link(session["cwd"]), labels["new_session"], session["cwd"])
-                   + copy_button(terminal_command(session["cwd"]), labels["copy_terminal"], labels)
-                   + copy_button(session["cwd"], labels["copy_path"], labels))
+                   + copy_button(resume, labels["copy_resume"], labels))
         parts.append(section(labels["actions"], '<div class="buttons">%s</div>' % actions))
     return "".join(parts)
 
@@ -253,6 +245,9 @@ def repository_panel(group, report, labels):
     chips = []
     if live.get("current_branch"):
         chips.append('<span class="chip">%s</span>' % e(live["current_branch"]))
+    if group.get("is_repository") and (live.get("notes") or live.get("uncommitted") is None):
+        # without this a repository git could not read shows no chips, exactly like a clean one
+        chips.append('<span class="chip warn" title="%s">%s</span>' % (e("; ".join(live.get("notes") or []), quote=True), e(labels["state_unread"])))
     if live.get("uncommitted"):
         chips.append('<span class="chip warn">%s %d</span>' % (e(labels["uncommitted"]), live["uncommitted"]))
     unpushed = sum(branch.get("unpushed") or 0 for branch in live.get("branches", []))
@@ -486,10 +481,10 @@ def page(report, digest):
     figures_html = '<p class="figures">%s</p>' % "".join("<span><b>%s</b> %s</span>" % (e(str(value)), e(label)) for value, label in stats)
     parts = mix(all_sessions(digest))
     whole = sum(parts.values()) or 1
-    mix_names = (("read", "cache read"), ("write", "cache write"), ("fresh", "uncached input"), ("out", "output"))
+    mix_names = (("read", labels["cache_read"]), ("write", labels["cache_write"]), ("fresh", labels["uncached_input"]), ("out", labels["output"]))
     mix_html = ('<div class="mix"><div class="mixbar" role="img" aria-label="token mix">%s</div><div class="legend">%s</div></div>'
                 % ("".join('<span style="width:%.3f%%;background:var(--mix-%s)"></span>' % (100.0 * parts[key] / whole, key) for key, _ in mix_names),
-                   "".join('<span><i style="background:var(--mix-%s)"></i>%s %s (%.1f%%)</span>' % (key, name, compact(parts[key]), 100.0 * parts[key] / whole)
+                   "".join('<span><i style="background:var(--mix-%s)"></i>%s %s (%.1f%%)</span>' % (key, e(name), compact(parts[key]), 100.0 * parts[key] / whole)
                            for key, name in mix_names)))
     panels = ['<section class="panel" id="overview">%s</section>' % overview_panel(digest, report, labels)]
     for index, group in enumerate(ordered(digest, report)):

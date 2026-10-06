@@ -245,6 +245,43 @@ def test_default_day():
     check("no transcripts is None", cl.default_day([], TODAY), None)
 
 
+def _work_days(records):
+    root = _projects({"proj/s1.jsonl": records})
+    return cl.work_days(os.path.join(root, "proj", "s1.jsonl"))
+
+
+def test_work_days():
+    check("a typed prompt makes a work day", _work_days([_user("fix the build")]), {DAY})
+    # the request that runs this skill is not part of the day it reports on
+    check("a day whose only prompt is the /remind-me command is not a work day",
+          _work_days([_user("<command-name>/remind-me</command-name>")]), set())
+    check("a day whose only prompt types /remind-me is not a work day",
+          _work_days([_user("/remind-me --day 2026-09-03")]), set())
+    check("a day with only a tool result is not a work day", _work_days([_user([_tool_result("ok")])]), set())
+    check("a day with only an isMeta entry is not a work day",
+          _work_days([_user("Base directory for this skill", isMeta=True)]), set())
+    check("a day with only command noise is not a work day",
+          _work_days([_user("<local-command-stdout>done</local-command-stdout>")]), set())
+    check("a day with only assistant entries is not a work day", _work_days([_assistant("a reply")]), set())
+    check("a malformed user line is skipped",
+          _work_days(['{"type":"user","timestamp":"' + _ts(PREV, "09:00") + '",broken', _user("fix the build")]),
+          {DAY})
+    # a `claude -p` transcript is a script or a probe, so even a typed prompt before its sdk-cli entry does not count
+    check("a transcript with an sdk-cli user entry has no work days",
+          _work_days([_user("thursday", day=PREV), _user("probe", entrypoint="sdk-cli")]), set())
+
+
+def test_default_day_work_days():
+    typed = {"proj/a.jsonl": [_user("thursday", day=PREV)]}
+    headless = dict(typed, **{"proj/b.jsonl": [_user("probe", day=DAY, entrypoint="sdk-cli")]})
+    remind = dict(typed, **{"proj/c.jsonl": [_user("<command-name>/remind-me</command-name>", day=DAY),
+                                             _assistant("the report", day=DAY)]})
+    check("a later day with only a claude -p run is skipped for the earlier day with work",
+          cl.default_day(cl.transcripts(_projects(headless)), TODAY), PREV)
+    check("a later day with only a /remind-me run is skipped for the earlier day with work",
+          cl.default_day(cl.transcripts(_projects(remind)), TODAY), PREV)
+
+
 def test_transcripts_skip_subagents():
     root = _projects({"proj/s1.jsonl": [_user("x")], "proj/s1/subagents/a1.jsonl": [_assistant("y")]})
     check("only main-session files", cl.transcripts(root), [os.path.join(root, "proj", "s1.jsonl")])
@@ -266,14 +303,25 @@ def test_typed_prompt_summary_and_command():
     summary = cl.COMPACTION_PREFIX + ". The conversation is summarised below."
     check("compaction summary kept as summary", cl.typed_prompt(_user(summary)), ("summary", summary))
     long_summary = cl.COMPACTION_PREFIX + "y" * 5000
-    check("a summary is cut to SUMMARY_LIMIT", cl.typed_prompt(_user(long_summary)),
-          ("summary", long_summary[:cl.SUMMARY_LIMIT]))
+    check("a long summary keeps its first SUMMARY_HEAD and last SUMMARY_TAIL characters",
+          cl.typed_prompt(_user(long_summary)),
+          ("summary", long_summary[:cl.SUMMARY_HEAD] + "\n[...]\n" + long_summary[-cl.SUMMARY_TAIL:]))
     check("command with its args",
           cl.typed_prompt(_user("<command-message>review</command-message>\n<command-name>/review</command-name>\n"
                                 "<command-args>  42 now </command-args>")), ("command", "/review 42 now"))
     check("command without args", cl.typed_prompt(_user("<command-name>/clear</command-name>")), ("command", "/clear"))
     check("command name without its slash gets one",
           cl.typed_prompt(_user("<command-name>plugin:skill</command-name>")), ("command", "/plugin:skill"))
+
+
+def test_typed_prompt_summary_boundary():
+    head = cl.COMPACTION_PREFIX + "a" * (cl.SUMMARY_HEAD - len(cl.COMPACTION_PREFIX))
+    tail = "z" * cl.SUMMARY_TAIL
+    check("a summary of exactly SUMMARY_HEAD + SUMMARY_TAIL characters is kept whole",
+          cl.typed_prompt(_user(head + tail)), ("summary", head + tail))
+    # the one character past the limit sits between head and tail, so only it is dropped
+    check("one character more is cut to head, marker and tail",
+          cl.typed_prompt(_user(head + "m" + tail)), ("summary", head + "\n[...]\n" + tail))
 
 
 def test_typed_prompt_excluded():
@@ -384,20 +432,6 @@ def test_subagent_usage():
                                 "cache_creation_input_tokens": 0}})
 
 
-# ----- stretches ---------------------------------------------------------------
-
-def test_stretches():
-    check("ACTIVE_GAP_MINUTES", cl.ACTIVE_GAP_MINUTES, 30)
-    check("a gap of exactly 30 minutes merges", cl.stretches(["10:00", "10:30"]), [["10:00", "10:30"]])
-    check("a gap of 31 minutes splits", cl.stretches(["10:00", "10:31"]), [["10:00", "10:00"], ["10:31", "10:31"]])
-    check("unsorted clocks sorted first", cl.stretches(["11:10", "10:00", "11:01", "10:20"]),
-          [["10:00", "10:20"], ["11:01", "11:10"]])
-    # each gap is measured from the end of the stretch so far, not from its start
-    check("a chain of short gaps stays one stretch", cl.stretches(["09:00", "09:25", "09:50", "10:15"]),
-          [["09:00", "10:15"]])
-    check("no clocks", cl.stretches([]), [])
-
-
 # ----- read_session -------------------------------------------------------------
 
 def _rich_session():
@@ -438,10 +472,6 @@ def test_read_session():
     check("prompts without the remind-me run", session["prompts"],
           [{"at": "10:00", "kind": "prompt", "text": "fix the build"}])
     check("questions", session["questions"], [{"at": "10:05", "text": "Want me to open the PR?"}])
-    check("actions from shell tool commands only", session["actions"],
-          [{"at": "10:05", "kind": "commit", "command": "git commit -m wip && git push origin feature"},
-           {"at": "10:05", "kind": "push", "command": "git commit -m wip && git push origin feature"},
-           {"at": "11:02", "kind": "pr-create", "command": "gh pr create --title x"}])
     check("pull requests from results, replies and commands, sorted", session["pull_requests"],
           ["azure:151943", "azure:888", "github:acme/widgets#12"])
     check("last reply is the last non-blank text", session["last_reply"],
@@ -451,7 +481,6 @@ def test_read_session():
                         "cache_creation_input_tokens": 0},
            "claude-y": {"input_tokens": 3, "output_tokens": 0, "cache_read_input_tokens": 0,
                         "cache_creation_input_tokens": 0}})
-    check("active stretches split by the 53-minute gap", session["active"], [["10:00", "10:07"], ["11:00", "11:02"]])
     check("pull_requests_new is left to collect", session["pull_requests_new"], [])
 
 
@@ -476,27 +505,55 @@ def test_read_session_nothing_that_day():
 
 
 def test_read_session_cuts():
-    command = "git push " + "x" * 300
-    session = _session([_assistant([_tool_use("Bash", command)]), _assistant("y" * 2000 + "?")])
-    check("an action's command is cut to COMMAND_LIMIT", session["actions"][0]["command"], command[:cl.COMMAND_LIMIT])
+    session = _session([_assistant("y" * 2000 + "?")])
     check("a question keeps its last QUESTION_TAIL characters", session["questions"][0]["text"],
           ("y" * 2000 + "?")[-cl.QUESTION_TAIL:])
     check("the last reply keeps its last LAST_TAIL characters", session["last_reply"]["text"],
           ("y" * 2000 + "?")[-cl.LAST_TAIL:])
 
 
-def test_read_session_elides_the_middle():
-    session = _session([_user("p%d" % n) for n in range(85)])
-    prompts = session["prompts"]
-    check("MAX_PROMPTS", cl.MAX_PROMPTS, 80)
-    # 10 from the start, a marker, and 70 from the end, so 5 of 85 are left out
-    check("kept count", len(prompts), 81)
-    check("the first ten kept", [p["text"] for p in prompts[:10]], ["p%d" % n for n in range(10)])
-    check("the marker", prompts[10], {"at": None, "kind": "elided", "text": "5 prompts left out"})
-    check("the rest from the end", [p["text"] for p in prompts[11:]], ["p%d" % n for n in range(15, 85)])
+def test_read_session_later_prompts():
+    session = _session([
+        _user("earlier", at="09:00", day=PREV),
+        _user("fix the build", at="10:00"),
+        _assistant("Done.", at="11:00", msg_id="m1", usage=_usage(5, 1)),
+        _user("merge it", at="09:15", day="2026-09-05", branch="later"),
+        _user("<command-name>/remind-me</command-name>", at="08:00", day=TODAY, branch="later"),
+        _user([_tool_result("Created !151943")], at="08:01", day=TODAY, branch="later"),
+        _assistant("Merged https://github.com/acme/widgets/pull/12. Want me to push?", at="08:02", day=TODAY,
+                   msg_id="m2", usage=_usage(100, 50), branch="later"),
+        _user("<command-name>/review</command-name><command-args>42</command-args>", at="08:03", day=TODAY,
+              branch="later"),
+    ])
+    check("typed prompts after the day collected in order with their day, clock and kind", session["later_prompts"],
+          [{"day": "2026-09-05", "at": "09:15", "kind": "prompt", "text": "merge it"},
+           {"day": TODAY, "at": "08:03", "kind": "command", "text": "/review 42"}])
+    check("later entries leave first and last alone", (session["first"], session["last"]), ("10:00", "11:00"))
+    check("later entries leave prompts alone", session["prompts"],
+          [{"at": "10:00", "kind": "prompt", "text": "fix the build"}])
+    check("later entries leave usage alone", session["usage"],
+          {"claude-x": {"input_tokens": 5, "output_tokens": 1, "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0}})
+    check("later entries leave pull requests alone", session["pull_requests"], [])
+    check("later entries leave branches alone", session["branches"], ["main"])
+    check("a later reply is neither a question nor the last reply", (session["questions"], session["last_reply"]),
+          ([], {"at": "11:00", "text": "Done."}))
 
-    session = _session([_user("p%d" % n) for n in range(80)])
-    check("exactly MAX_PROMPTS kept whole", [p["text"] for p in session["prompts"]], ["p%d" % n for n in range(80)])
+
+def test_read_session_later_prompts_cap():
+    records = [_user("fix the build", at="10:00")]
+    records += [_user("p%d" % n, at="08:%02d" % n, day=TODAY) for n in range(cl.LATER_PROMPTS + 5)]
+    session = _session(records)
+    check("later prompts capped at LATER_PROMPTS, the first ones kept", [p["text"] for p in session["later_prompts"]],
+          ["p%d" % n for n in range(cl.LATER_PROMPTS)])
+    # past the cap a later entry falls through to the day check, which must still turn it away
+    check("later entries past the cap leave the day alone",
+          (session["first"], session["last"], session["prompts"]),
+          ("10:00", "10:00", [{"at": "10:00", "kind": "prompt", "text": "fix the build"}]))
+
+
+def test_read_session_only_later():
+    check("entries only after the day is None", _session([_user("monday", day=TODAY)]), None)
 
 
 # ----- collect: which sessions, grouped how --------------------------------------
@@ -570,13 +627,20 @@ def test_collect_live_pull_requests_new():
     repo = _repo()
     remote = "https://dev.azure.com/acme/proj/_git/widgets"
     _git(repo, "remote", "add", "origin", remote)
-    states = {"1234": {"status": "active", "created": _local(DAY, "09:00")},
-              "5678": {"status": "completed", "created": _local(PREV, "09:00")}}
+    # the author differs in case from the signed-in account, so the comparison has to ignore case
+    states = {"1234": {"status": "active", "created": _local(DAY, "09:00"), "author": "ann@EXAMPLE.com"},
+              "5678": {"status": "completed", "created": _local(PREV, "09:00"), "author": "ann@EXAMPLE.com"}}
 
     def answer(argv):
-        if argv[0] == "az":
+        if argv[:4] == ["az", "repos", "pr", "show"]:
             return True, json.dumps(states[argv[argv.index("--id") + 1]])
-        return True, json.dumps({"state": "OPEN", "createdAt": _local(DAY, "12:00"), "author": {"login": "ann"}})
+        if argv[:3] == ["az", "account", "show"]:
+            return True, "Ann@example.com\n"
+        if argv[:3] == ["gh", "api", "user"]:
+            return True, "ann\n"
+        if argv[:3] == ["gh", "pr", "view"]:
+            return True, json.dumps({"state": "OPEN", "createdAt": _local(DAY, "12:00"), "author": {"login": "ann"}})
+        return False, "not answered by the tests"
 
     digest, calls = _with_cli(answer, lambda: _collect({"proj/s1.jsonl": [
         _user("go", cwd=repo),
@@ -584,14 +648,134 @@ def test_collect_live_pull_requests_new():
         today=TODAY))
     session = digest["repositories"][0]["sessions"][0]
     check("the organisation comes from the repository's remote",
-          sorted(c[c.index("--org") + 1] for c in calls if c[0] == "az"), ["https://dev.azure.com/acme"] * 2)
+          sorted(c[c.index("--org") + 1] for c in calls if c[:4] == ["az", "repos", "pr", "show"]),
+          ["https://dev.azure.com/acme"] * 2)
     check("every named pull request looked up", sorted(digest["pull_requests"]),
           ["azure:1234", "azure:5678", "github:acme/widgets#12"])
     check("an old pull request keeps its own state", digest["pull_requests"]["azure:5678"]["status"], "completed")
-    # the new ones are those the platform says were created that day
-    check("pull_requests_new is the keys created on the day", session["pull_requests_new"],
+    # the new ones are those the platform says were created that day, by the person
+    check("pull_requests_new is the keys created on the day by the person", session["pull_requests_new"],
           ["azure:1234", "github:acme/widgets#12"])
     check("the repository's live state was read", digest["repositories"][0]["live"]["remote"], remote)
+
+
+def test_collect_default_day_work_days():
+    typed = {"proj/a.jsonl": [_user("thursday", day=PREV)]}
+    headless = dict(typed, **{"proj/b.jsonl": [_user("probe", day=DAY, entrypoint="sdk-cli")]})
+    remind = dict(typed, **{"proj/c.jsonl": [_user("<command-name>/remind-me</command-name>", day=DAY),
+                                             _assistant("the report", day=DAY)]})
+    digest = _collect(headless, day=None, live=False, today=TODAY)
+    check("a later day with only a claude -p run gives way to the earlier day with work",
+          (digest["day"], _summary(digest)), (PREV, [(FOLDER, False, False, ["a"])]))
+    digest = _collect(remind, day=None, live=False, today=TODAY)
+    check("a later day with only a /remind-me run gives way to the earlier day with work",
+          (digest["day"], _summary(digest)), (PREV, [(FOLDER, False, False, ["a"])]))
+
+
+def test_collect_live_merged_by():
+    widgets = _repo()
+    _git(widgets, "remote", "add", "origin", "https://dev.azure.com/acme/proj/_git/widgets")
+    # the same branch name in another repository, where a match by name alone would hide its unpushed commit
+    gadgets = _repo()
+    _git(gadgets, "remote", "add", "origin", "https://dev.azure.com/acme/proj/_git/gadgets")
+    tools = _repo()
+    _git(tools, "remote", "add", "origin", "https://github.com/acme/tools.git")
+    for repo, names in ((widgets, ("feature/x", "feature/active", "feature/abandoned")), (gadgets, ("feature/x",)),
+                        (tools, ("gh-merged",))):
+        for name in names:
+            _git(repo, "branch", name)
+    states = {"1001": {"status": "completed", "source": "refs/heads/feature/x", "repository": "widgets"},
+              "1002": {"status": "active", "source": "refs/heads/feature/active", "repository": "widgets"},
+              "1003": {"status": "abandoned", "source": "refs/heads/feature/abandoned", "repository": "widgets"}}
+
+    def answer(argv):
+        if argv[:4] == ["az", "repos", "pr", "show"]:
+            return True, json.dumps(states[argv[argv.index("--id") + 1]])
+        if argv[:3] == ["gh", "pr", "view"]:
+            return True, json.dumps({"state": "MERGED", "headRefName": "gh-merged",
+                                     "createdAt": _local(PREV, "09:00"), "author": {"login": "ann"}})
+        return False, "not answered by the tests"
+
+    files = {"proj/w1.jsonl": [_user("a", cwd=widgets, branch="feature/x"),
+                               _user("b", cwd=widgets, branch="feature/active"),
+                               _user("c", cwd=widgets, branch="feature/abandoned"),
+                               _assistant("!1001 !1002 !1003", cwd=widgets, branch="feature/x")],
+             "proj/g1.jsonl": [_user("d", cwd=gadgets, branch="feature/x")],
+             "proj/t1.jsonl": [_user("e", cwd=tools, branch="gh-merged"),
+                               _assistant("https://github.com/acme/tools/pull/7", cwd=tools, branch="gh-merged")]}
+    digest, _ = _with_cli(answer, lambda: _collect(files, today=TODAY))
+    branches = {g["path"]: {b["name"]: b for b in g["live"]["branches"]} for g in digest["repositories"]}
+    # each repository holds only its first commit and no remote-tracking ref, so an untouched branch has one unpushed
+    check("a branch merged by a completed Azure pull request in its repository",
+          branches[_toplevel(widgets)]["feature/x"],
+          {"name": "feature/x", "local": True, "on_remote": False, "unpushed": None, "merged_by": "azure:1001"})
+    check("a branch matching an active pull request is untouched", branches[_toplevel(widgets)]["feature/active"],
+          {"name": "feature/active", "local": True, "on_remote": False, "unpushed": 1})
+    check("a branch matching an abandoned pull request is untouched",
+          branches[_toplevel(widgets)]["feature/abandoned"],
+          {"name": "feature/abandoned", "local": True, "on_remote": False, "unpushed": 1})
+    check("the same branch name in a different repository is untouched", branches[_toplevel(gadgets)]["feature/x"],
+          {"name": "feature/x", "local": True, "on_remote": False, "unpushed": 1})
+    check("a branch merged by a merged GitHub pull request in its repository", branches[_toplevel(tools)]["gh-merged"],
+          {"name": "gh-merged", "local": True, "on_remote": False, "unpushed": None,
+           "merged_by": "github:acme/tools#7"})
+
+
+def _collect_new_pull_requests(account):
+    """Collect a day naming the person's new pull request, a colleague's, and one that cannot be read,
+    with az account show answering account."""
+    repo = _repo()
+    _git(repo, "remote", "add", "origin", "https://dev.azure.com/acme/proj/_git/widgets")
+    states = {"2001": {"status": "active", "created": _local(DAY, "09:00"), "author": "ann@example.com"},
+              "2002": {"status": "active", "created": _local(DAY, "10:00"), "author": "colleague@example.com"}}
+
+    def answer(argv):
+        if argv[:4] == ["az", "repos", "pr", "show"]:
+            ref = argv[argv.index("--id") + 1]
+            return (True, json.dumps(states[ref])) if ref in states else (False, "TF401180: not found")
+        if argv[:3] == ["az", "account", "show"]:
+            return account
+        return False, "not answered by the tests"
+
+    digest, _ = _with_cli(answer, lambda: _collect({"proj/s1.jsonl": [
+        _user("go", cwd=repo), _assistant("opened !2001, reviewed !2002 and !2003", cwd=repo)]}, today=TODAY))
+    return digest
+
+
+def test_collect_live_pull_requests_new_author():
+    digest = _collect_new_pull_requests((True, "ann@example.com\n"))
+    check("the identity comes from the signed-in account", digest["identities"], ["ann@example.com"])
+    check("the unreadable pull request is unknown", digest["pull_requests"]["azure:2003"]["status"], "unknown")
+    check("a colleague's pull request and an unknown one are not new",
+          digest["repositories"][0]["sessions"][0]["pull_requests_new"], ["azure:2001"])
+
+
+def test_collect_live_pull_requests_new_no_identity():
+    digest = _collect_new_pull_requests((False, "az: login required"))
+    check("no CLI account and no git email is no identity", digest["identities"], [])
+    # with nobody to compare against, created that day is all that can be checked
+    check("no identity falls back to the day alone, and an unknown one is still not new",
+          digest["repositories"][0]["sessions"][0]["pull_requests_new"], ["azure:2001", "azure:2002"])
+
+
+def test_collect_output_shape():
+    digest = _collect({"proj/s1.jsonl": [_user("go")]}, live=False, today=TODAY)
+    check("a collected session carries no entrypoint", "entrypoint" in digest["repositories"][0]["sessions"][0], False)
+    repo = _repo()
+    _git(repo, "config", "user.email", "Ann@Example.com")
+    digest, calls = _with_cli(lambda argv: (False, "not answered by the tests"),
+                              lambda: _collect({"proj/s1.jsonl": [_user("go", cwd=repo)]}, today=TODAY))
+    check("a session on the live path carries no entrypoint",
+          "entrypoint" in digest["repositories"][0]["sessions"][0], False)
+    # the full set, so a key that was removed cannot come back unnoticed
+    check("a session on the live path carries exactly these keys",
+          sorted(digest["repositories"][0]["sessions"][0]),
+          sorted(["id", "cwd", "branches", "first", "last", "prompts", "questions", "pull_requests",
+                  "pull_requests_new", "last_reply", "later_prompts", "usage", "running"]))
+    check("the digest on the live path carries exactly these keys", sorted(digest),
+          sorted(["day", "generated", "left_out", "repositories", "pull_requests", "identities"]))
+    check("the digest carries identities on the live path", digest["identities"], ["ann@example.com"])
+    check("no pull request named, so no CLI asked", calls, [])
 
 
 # ----- azure_organisation ---------------------------------------------------------
@@ -647,12 +831,12 @@ def test_pull_request_state_azure():
 
 def test_pull_request_state_github():
     answer = {"state": "MERGED", "title": "t", "createdAt": "2026-09-04T10:00:00Z", "author": {"login": "ann"},
-              "url": "https://github.com/acme/widgets/pull/12"}
+              "headRefName": "feature", "url": "https://github.com/acme/widgets/pull/12"}
     state, calls = _with_cli(lambda argv: (True, json.dumps(answer)),
                              lambda: cl.pull_request_state("github:acme/widgets#12", ["https://dev.azure.com/one"]))
-    check("state lower-cased into status, createdAt to created, author to its login",
+    check("state lower-cased into status, createdAt to created, author to its login, headRefName to source",
           state, {"status": "merged", "title": "t", "created": "2026-09-04T10:00:00Z", "author": "ann",
-                  "url": "https://github.com/acme/widgets/pull/12"})
+                  "source": "feature", "url": "https://github.com/acme/widgets/pull/12"})
     check("gh asked for the number in its repository", [c[:6] for c in calls],
           [["gh", "pr", "view", "12", "-R", "acme/widgets"]])
 
@@ -663,6 +847,49 @@ def test_pull_request_state_github():
 
     state, _ = _with_cli(lambda argv: (True, ""), lambda: cl.pull_request_state("github:acme/widgets#12", []))
     check("an empty answer is unknown", state, {"status": "unknown", "reason": "unreadable answer"})
+
+
+def test_pull_request_state_azure_source_and_author():
+    answer = {"status": "completed", "source": "refs/heads/feature/x", "author": "ann@example.com",
+              "repository": "widgets"}
+    state, calls = _with_cli(lambda argv: (True, json.dumps(answer)),
+                             lambda: cl.pull_request_state("azure:42", ["https://dev.azure.com/one"]))
+    query = calls[0][calls[0].index("--query") + 1]
+    check("the query asks for the source branch and the author",
+          [field for field in query.strip("{}").split(",") if field.split(":")[0] in ("source", "author")],
+          ["source:sourceRefName", "author:createdBy.uniqueName"])
+    check("refs/heads/ dropped from an Azure source", state,
+          {"status": "completed", "source": "feature/x", "author": "ann@example.com", "repository": "widgets"})
+
+
+# ----- same_repository -------------------------------------------------------------
+
+def test_same_repository_azure():
+    state = {"repository": "Widgets"}
+    check("https _git/<name>, ignoring case",
+          cl.same_repository("azure:1", state, "https://dev.azure.com/acme/proj/_git/WIDGETS"), True)
+    check("ssh v3", cl.same_repository("azure:1", state, "git@ssh.dev.azure.com:v3/acme/proj/widgets"), True)
+    check("a trailing slash", cl.same_repository("azure:1", state, "https://dev.azure.com/acme/proj/_git/widgets/"),
+          True)
+    check("a URL-encoded name", cl.same_repository(
+        "azure:1", {"repository": "My Repo"}, "https://dev.azure.com/acme/proj/_git/My%20Repo"), True)
+    check("another repository", cl.same_repository("azure:1", state, "https://dev.azure.com/acme/proj/_git/gadgets"),
+          False)
+    check("no repository name", cl.same_repository("azure:1", {}, "https://dev.azure.com/acme/proj/_git/widgets"),
+          False)
+    check("no remote", cl.same_repository("azure:1", state, None), False)
+    # both missing leave an empty name against an empty last path segment, which only the name guard refuses
+    check("no repository name and no remote", cl.same_repository("azure:1", {}, None), False)
+
+
+def test_same_repository_github():
+    key = "github:acme/widgets#12"
+    check("https with .git", cl.same_repository(key, {}, "https://github.com/acme/widgets.git"), True)
+    check("scp ssh", cl.same_repository(key, {}, "git@github.com:acme/widgets.git"), True)
+    check("owner and repository ignore case", cl.same_repository("github:Acme/Widgets#12", {},
+                                                                 "https://github.com/acme/widgets"), True)
+    check("a different owner", cl.same_repository(key, {}, "https://github.com/other/widgets.git"), False)
+    check("no remote", cl.same_repository(key, {}, None), False)
 
 
 def test_created_on():
@@ -688,9 +915,9 @@ def test_live_state():
     state = cl.live_state(repo, [{"branches": ["main", "local-only"]}, {"branches": ["main", "gone"]}])
     check("live state of the repository", state,
           {"uncommitted": 2, "notes": [], "current_branch": "main",
-           "remote": "https://dev.azure.com/acme/proj/_git/widgets",
+           "remote": "https://dev.azure.com/acme/proj/_git/widgets", "email": None,
            "branches": [{"name": "main", "local": True, "on_remote": True, "unpushed": 2},
-                        {"name": "local-only", "local": True, "on_remote": False},
+                        {"name": "local-only", "local": True, "on_remote": False, "unpushed": 2},
                         {"name": "gone", "local": False}]})
 
 
@@ -700,6 +927,63 @@ def test_live_state_not_a_repository():
           (state["uncommitted"], state["current_branch"], state["remote"]), (None, None, None))
     check("the failure is noted", [note.startswith("git status failed: ") for note in state["notes"]], [True])
     check("a branch that cannot be read is not local", state["branches"], [{"name": "main", "local": False}])
+
+
+def test_live_state_remote_and_email():
+    repo = _repo()
+    _git(repo, "remote", "add", "origin", "https://user:token@dev.azure.com/acme/proj/_git/widgets")
+    _git(repo, "config", "user.email", "Ann@Example.com")
+    state = cl.live_state(repo, [])
+    check("credentials dropped from an https remote", state["remote"], "https://dev.azure.com/acme/proj/_git/widgets")
+    check("email from the repository's own git config, as written", state["email"], "Ann@Example.com")
+    ssh = _repo()
+    _git(ssh, "remote", "add", "origin", "git@github.com:acme/widgets.git")
+    check("an scp-form ssh remote unchanged", cl.live_state(ssh, [])["remote"], "git@github.com:acme/widgets.git")
+
+
+def test_live_state_unpushed_other_remote():
+    repo = _repo()
+    _git(repo, "branch", "feature")
+    # the branch's commit sits on a fork's ref and not on origin/feature, which an origin/feature..feature range would miss
+    _git(repo, "update-ref", "refs/remotes/fork/feature", _git(repo, "rev-parse", "HEAD"))
+    state = cl.live_state(repo, [{"branches": ["feature"]}])
+    check("commits on any remote-tracking ref are pushed", state["branches"],
+          [{"name": "feature", "local": True, "on_remote": False, "unpushed": 0}])
+
+
+# ----- identities ------------------------------------------------------------------
+
+_AZ_ACCOUNT = ["az", "account", "show", "--query", "user.name", "-o", "tsv"]
+_GH_USER = ["gh", "api", "user", "--jq", ".login"]
+
+
+def _identities(keys, answer):
+    digest = {"repositories": [{"live": {"email": "Ann@Example.COM"}}, {"live": {"email": "bob@example.com"}},
+                               {"live": {"email": None}}, {"path": "no live state"}],
+              "pull_requests": dict.fromkeys(keys, {})}
+    return _with_cli(answer, lambda: cl.identities(digest))
+
+
+def test_identities():
+    def signed_in(argv):
+        if argv[:3] == ["az", "account", "show"]:
+            return True, "ANN@example.com\n"
+        if argv[:3] == ["gh", "api", "user"]:
+            return True, "Ann\n"
+        return False, "not answered by the tests"
+
+    both = ["azure:1", "github:acme/widgets#2"]
+    check("git emails and both accounts, lowercased, de-duplicated and sorted",
+          _identities(both, signed_in), (["ann", "ann@example.com", "bob@example.com"], [_AZ_ACCOUNT, _GH_USER]))
+    check("only an azure key asks only az",
+          _identities(["azure:1"], signed_in), (["ann@example.com", "bob@example.com"], [_AZ_ACCOUNT]))
+    check("only a github key asks only gh",
+          _identities(["github:acme/widgets#2"], signed_in), (["ann", "ann@example.com", "bob@example.com"], [_GH_USER]))
+    check("no pull request asks neither", _identities([], signed_in), (["ann@example.com", "bob@example.com"], []))
+    check("a failed CLI adds nothing", _identities(both, lambda argv: (False, "login required")),
+          (["ann@example.com", "bob@example.com"], [_AZ_ACCOUNT, _GH_USER]))
+    check("an empty CLI answer adds nothing", _identities(both, lambda argv: (True, "  \n")),
+          (["ann@example.com", "bob@example.com"], [_AZ_ACCOUNT, _GH_USER]))
 
 
 # ----- main: exit status and output ---------------------------------------------
@@ -731,13 +1015,11 @@ def test_main_no_sessions():
     check("EXIT_NO_SESSIONS", cl.EXIT_NO_SESSIONS, 3)
     check("no session exits 3", code, 3)
     check("the digest is still printed", (json.loads(out)["day"], json.loads(out)["repositories"]), (DAY, []))
-    check("stderr names the day and cleanupPeriodDays", err,
-          "no sessions on %s; Claude Code deletes transcripts after cleanupPeriodDays, 30 days by default\n" % DAY)
+    check("stderr names the day", err, "no sessions on %s\n" % DAY)
 
     code, _, err = _main(["--no-live"])
     check("no day and no session exits 3", code, 3)
-    check("stderr says any day before today",
-          err.startswith("no sessions on any day before today;") and "cleanupPeriodDays" in err, True)
+    check("stderr says any day before today", err, "no sessions on any day before today\n")
 
 
 def test_main_day_format():
@@ -771,16 +1053,22 @@ def test_no_cli_escaped():
     check("no az or gh call reached the guard", _escaped, [])
 
 
-_TESTS = (test_isolation, test_local_time, test_days_in, test_default_day, test_transcripts_skip_subagents,
-          test_typed_prompt_kept, test_typed_prompt_summary_and_command, test_typed_prompt_excluded,
+_TESTS = (test_isolation, test_local_time, test_days_in, test_default_day, test_work_days, test_default_day_work_days,
+          test_transcripts_skip_subagents,
+          test_typed_prompt_kept, test_typed_prompt_summary_and_command, test_typed_prompt_summary_boundary,
+          test_typed_prompt_excluded,
           test_invokes_remind_me, test_is_question, test_pull_requests_azure, test_pull_requests_github,
-          test_add_usage, test_subagent_usage, test_stretches,
+          test_add_usage, test_subagent_usage,
           test_result_text, test_read_session, test_read_session_nothing_that_day, test_read_session_cuts,
-          test_read_session_elides_the_middle,
+          test_read_session_later_prompts, test_read_session_later_prompts_cap, test_read_session_only_later,
           test_collect_left_out_and_dropped, test_collect_groups_by_repository, test_collect_running_sessions,
           test_collect_default_day, test_collect_live_pull_requests_new,
+          test_collect_default_day_work_days, test_collect_live_merged_by, test_collect_live_pull_requests_new_author,
+          test_collect_live_pull_requests_new_no_identity, test_collect_output_shape,
           test_azure_organisation, test_pull_request_state_azure, test_pull_request_state_github, test_created_on,
-          test_live_state, test_live_state_not_a_repository,
+          test_pull_request_state_azure_source_and_author, test_same_repository_azure, test_same_repository_github,
+          test_live_state, test_live_state_not_a_repository, test_live_state_remote_and_email,
+          test_live_state_unpushed_other_remote, test_identities,
           test_main_no_sessions, test_main_day_format, test_non_ascii_on_cp1252_console,
           test_no_cli_escaped)
 
