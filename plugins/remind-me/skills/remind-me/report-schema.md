@@ -52,8 +52,11 @@ Every label is required, in the report's language.
 | `new_session` | new session |
 | `copy_terminal` | copy terminal command |
 | `copy_path` | copy path |
+| `show_all` | Show all |
 | `copied` | copied |
 | `theme` | theme |
+| `theme_light` | Light |
+| `theme_dark` | Dark |
 | `uncommitted` | uncommitted |
 | `unpushed` | unpushed |
 | `nothing_open` | Nothing left open. |
