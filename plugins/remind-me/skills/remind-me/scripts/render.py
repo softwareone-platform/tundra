@@ -385,7 +385,7 @@ h1 { font-size:26px; line-height:1.3; margin:0; text-wrap:balance }
 .grid > .tname, .grid > .track { border-top:1px solid var(--line) }
 .axis { position:relative; height:18px }
 .tick { position:absolute; transform:translateX(-50%); font-size:11px; color:var(--faint); font-variant-numeric:tabular-nums }
-.tname { font:inherit; text-align:left; background:none; border:0; color:var(--ink); cursor:pointer; padding:4px 8px 4px 0; display:flex; flex-direction:column; gap:3px; align-items:flex-start; border-radius:0; align-self:stretch; justify-content:center; padding:8px 16px 8px 0 }
+.tname { font:inherit; text-align:left; background:none; border:0; color:var(--ink); cursor:pointer; padding:4px 8px 4px 0; display:flex; flex-direction:column; gap:3px; align-items:flex-start; border-radius:0; align-self:stretch; justify-content:flex-start; padding:4px 16px 8px 0 }
 .tname .line { display:flex; gap:6px; align-items:center; white-space:nowrap }
 .tname .nm { font-weight:600; font-size:14px; text-decoration:underline; text-decoration-color:var(--line); text-underline-offset:3px }
 .tname:hover .nm, .tname.on .nm { text-decoration-color:var(--accent); color:var(--accent) }
