@@ -79,10 +79,15 @@ def buckets(sessions):
 
 
 def compact(number):
-    for size, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "k")):
-        if number >= size:
-            return ("%.1f" % (number / size)).rstrip("0").rstrip(".") + suffix
-    return str(number)
+    units = ("", "k", "M", "B")
+    value, unit = float(number), 0
+    # move up a unit whenever rounding to one decimal would reach 1000, so 999,999 reads 1M rather than 1000k
+    while unit < len(units) - 1 and round(value, 1) >= 1000:
+        value /= 1000
+        unit += 1
+    if unit == 0:
+        return str(number)
+    return ("%.1f" % value).rstrip("0").rstrip(".") + units[unit]
 
 
 def windows():
@@ -385,7 +390,7 @@ h1 { font-size:26px; line-height:1.3; margin:0; text-wrap:balance }
 .grid > .tname, .grid > .track { border-top:1px solid var(--line) }
 .axis { position:relative; height:18px }
 .tick { position:absolute; transform:translateX(-50%); font-size:11px; color:var(--faint); font-variant-numeric:tabular-nums }
-.tname { font:inherit; text-align:left; background:none; border:0; color:var(--ink); cursor:pointer; padding:4px 8px 4px 0; display:flex; flex-direction:column; gap:3px; align-items:flex-start; border-radius:0; align-self:stretch; justify-content:flex-start; padding:4px 16px 8px 0 }
+.tname { font:inherit; text-align:left; background:none; border:0; color:var(--ink); cursor:pointer; padding:4px 8px 4px 0; display:flex; flex-direction:column; gap:3px; align-items:flex-start; border-radius:0; align-self:stretch; justify-content:flex-start; padding:4px 16px 14px 0 }
 .tname .line { display:flex; gap:6px; align-items:center; white-space:nowrap }
 .tname .nm { font-weight:600; font-size:14px; text-decoration:underline; text-decoration-color:var(--line); text-underline-offset:3px }
 .tname:hover .nm, .tname.on .nm { text-decoration-color:var(--accent); color:var(--accent) }

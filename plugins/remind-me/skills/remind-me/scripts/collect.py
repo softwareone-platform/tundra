@@ -219,6 +219,16 @@ def stretches(clocks):
     return found
 
 
+def result_text(content):
+    """A tool result as text, its text blocks as written: serialising them would escape the quotes a pattern looks for."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(part.get("text", "") if isinstance(part, dict) and part.get("type") == "text"
+                         else json.dumps(part, ensure_ascii=False) for part in content)
+    return json.dumps(content, ensure_ascii=False)
+
+
 def read_session(path, day):
     """Everything the digest keeps from one transcript on one day, or None when it has nothing that day."""
     session = {
@@ -267,9 +277,7 @@ def read_session(path, day):
                     session["prompts"].append({"at": clock, "kind": prompt[0], "text": prompt[1]})
                 for block in blocks(entry.get("message") or {}):
                     if block.get("type") == "tool_result":
-                        content = block.get("content")
-                        text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
-                        prs.update(pull_requests(text))
+                        prs.update(pull_requests(result_text(block.get("content"))))
             elif kind == "assistant" and not entry.get("isSidechain"):
                 add_usage(session["usage"], seen_usage, entry)
                 for block in blocks(entry.get("message") or {}):
@@ -483,7 +491,10 @@ def main(argv=None):
     parser.add_argument("--no-live", action="store_true", help="skip git and pull request lookups")
     args = parser.parse_args(argv)
     if args.day:
+        # fromisoformat alone also accepts 20260904 and 2026-W36-5, which match no day key and read as an empty day
         try:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.day):
+                raise ValueError(args.day)
             datetime.date.fromisoformat(args.day)
         except ValueError:
             parser.error("--day must be YYYY-MM-DD")

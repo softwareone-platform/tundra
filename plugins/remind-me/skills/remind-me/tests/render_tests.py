@@ -218,8 +218,11 @@ def test_compact():
              (2000000, "2M"), (2340000, "2.3M"), (1000000000, "1B"), (4560000000, "4.6B")]
     for number, want in cases:
         check("compact(%d)" % number, render.compact(number), want)
-    # observed, not designed: just under a boundary rounds up inside the smaller unit (reported as a divergence)
-    check("compact(999999) stays in k", render.compact(999999), "1000k")
+    # the unit is chosen after rounding to one decimal, so a number that rounds to 1000 of one unit reads as 1 of the next
+    boundaries = [(999949, "999.9k"), (999950, "1M"), (999999, "1M"), (4300000, "4.3M"),
+                  (999999999, "1B"), (2500000000, "2.5B")]
+    for number, want in boundaries:
+        check("compact(%d) at a unit boundary" % number, render.compact(number), want)
 
 
 def test_figures():
@@ -366,6 +369,12 @@ def test_repository_resume_last():
     check("it resumes the latest-ending stopped session", "%2Fresume%20s2" in panel, True)
     check("not an earlier one", "%2Fresume%20s1" in panel, False)
     check("not the running one", "%2Fresume%20s3" in panel, False)
+
+    # listed first but ending latest, so only a pick by end time chooses s1 over the last in list order
+    nested = [_session("s1", first="09:00", last="16:00"), _session("s2", first="10:00", last="11:00")]
+    panel = _panel(render.page(_report({"s1": _body(), "s2": _body()}), _digest([_group_of("repo-a", nested)])), "r-0")
+    check("latest by end time, not by list order", "%2Fresume%20s1" in panel, True)
+    check("not the session listed last", "%2Fresume%20s2" in panel, False)
 
     all_running = [_session("s1", running="running"), _session("s2", first="12:00", last="15:00", running="running")]
     panel = _panel(render.page(_report({"s1": _body(), "s2": _body()}), _digest([_group_of("repo-a", all_running)])), "r-0")

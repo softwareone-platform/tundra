@@ -411,7 +411,7 @@ def _rich_session():
             _assistant([_tool_use("Read", "git commit -m not-a-shell")], at="10:05", msg_id="m1",
                        usage=_usage(10, 5)),
             _user([_tool_result("Created !151943")], at="10:06"),
-            # a list-content result is serialised before it is searched
+            # a list-content result is searched through its text blocks
             _user([_tool_result([{"type": "text", "text": "https://dev.azure.com/a/p/_git/r/pullrequest/888"}])],
                   at="10:07"),
             _assistant("Merged. See https://github.com/acme/widgets/pull/12", at="11:00", msg_id="m2",
@@ -453,6 +453,21 @@ def test_read_session():
                         "cache_creation_input_tokens": 0}})
     check("active stretches split by the 53-minute gap", session["active"], [["10:00", "10:07"], ["11:00", "11:02"]])
     check("pull_requests_new is left to collect", session["pull_requests_new"], [])
+
+
+def test_result_text():
+    block = {"type": "text", "text": '{"pullRequestId": 777}'}
+    check("a string passes through unchanged", cl.result_text('{"pullRequestId": 777}'), '{"pullRequestId": 777}')
+    # serialising a text block would escape the quotes the pullRequestId pattern looks for
+    check("a text block keeps its quotes", cl.pull_requests(cl.result_text([block])), {"azure:777"})
+    check("text blocks joined by newlines",
+          cl.result_text([{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]), "a\nb")
+    image = {"type": "image", "source": {"data": "x"}}
+    check("a non-text block is serialised", cl.result_text([image]), json.dumps(image, ensure_ascii=False))
+    check("a non-list, non-string value is serialised", cl.result_text({"k": 1}), '{"k": 1}')
+
+    session = _session([_user([_tool_result([block])])])
+    check("read_session finds a pullRequestId inside a list-content result", session["pull_requests"], ["azure:777"])
 
 
 def test_read_session_nothing_that_day():
@@ -726,7 +741,8 @@ def test_main_no_sessions():
 
 
 def test_main_day_format():
-    for day in ("yesterday", "2026-13-01"):
+    # fromisoformat accepts the basic and the week-date forms, and those must be refused too
+    for day in ("yesterday", "2026-13-01", "20260904", "2026-W36-5"):
         code, out, err = _main(["--day", day, "--no-live"])
         check("--day %s exits 2" % day, code, 2)
         check("--day %s explains the format" % day, err.rstrip().endswith("--day must be YYYY-MM-DD"), True)
@@ -759,7 +775,7 @@ _TESTS = (test_isolation, test_local_time, test_days_in, test_default_day, test_
           test_typed_prompt_kept, test_typed_prompt_summary_and_command, test_typed_prompt_excluded,
           test_invokes_remind_me, test_is_question, test_pull_requests_azure, test_pull_requests_github,
           test_add_usage, test_subagent_usage, test_stretches,
-          test_read_session, test_read_session_nothing_that_day, test_read_session_cuts,
+          test_result_text, test_read_session, test_read_session_nothing_that_day, test_read_session_cuts,
           test_read_session_elides_the_middle,
           test_collect_left_out_and_dropped, test_collect_groups_by_repository, test_collect_running_sessions,
           test_collect_default_day, test_collect_live_pull_requests_new,
