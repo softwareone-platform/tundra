@@ -39,6 +39,9 @@ LIVE_TIMEOUT = 60
 
 COMPACTION_PREFIX = "This session is being continued from a previous conversation"
 NOISE_PREFIXES = ("<local-command", "<task-notification>", "<bash-input>", "<bash-stdout>", "<bash-stderr>")
+# Claude Code writes an interruption as a user entry holding only this marker,
+# and whatever the person types next is an entry of its own
+INTERRUPT_MARKERS = ("[Request interrupted by user]", "[Request interrupted by user for tool use]")
 SYSTEM_REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
 COMMAND_NAME = re.compile(r"<command-name>\s*(/?[\w:.-]+)\s*</command-name>")
 COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
@@ -147,7 +150,7 @@ def typed_prompt(entry):
     if any(block.get("type") == "tool_result" for block in parts):
         return None
     text = plain("\n".join(block.get("text", "") for block in parts if block.get("type") == "text"))
-    if not text or text.startswith(NOISE_PREFIXES):
+    if not text or text.startswith(NOISE_PREFIXES) or text in INTERRUPT_MARKERS:
         return None
     if text.startswith(COMPACTION_PREFIX):
         # a compaction summary ends with what was still pending and the next step, which is what this report is for

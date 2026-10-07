@@ -147,6 +147,15 @@ def _tool_result(content):
     return {"type": "tool_result", "tool_use_id": "t", "content": content}
 
 
+INTERRUPTED = "[Request interrupted by user]"
+INTERRUPTED_TOOL = "[Request interrupted by user for tool use]"
+
+
+def _interrupt(marker, at="10:00", **extra):
+    """An interruption as Claude Code writes it: a user entry holding only the marker in a text block."""
+    return _user([{"type": "text", "text": marker}], at=at, **extra)
+
+
 def _usage(inp=0, out=0, read=0, write=0):
     return {"input_tokens": inp, "output_tokens": out, "cache_read_input_tokens": read,
             "cache_creation_input_tokens": write}
@@ -271,6 +280,15 @@ def test_work_days():
           _work_days([_user("thursday", day=PREV), _user("probe", entrypoint="sdk-cli")]), set())
 
 
+def test_work_days_interrupted():
+    check("a day whose only user entry is an interruption is not a work day", _work_days([_interrupt(INTERRUPTED)]),
+          set())
+    check("a day whose only user entry is an interruption for tool use is not a work day",
+          _work_days([_interrupt(INTERRUPTED_TOOL)]), set())
+    check("an interruption the day before a typed prompt adds only the prompt's day",
+          _work_days([_interrupt(INTERRUPTED, day=PREV), _user("fix the build")]), {DAY})
+
+
 def test_default_day_work_days():
     typed = {"proj/a.jsonl": [_user("thursday", day=PREV)]}
     headless = dict(typed, **{"proj/b.jsonl": [_user("probe", day=DAY, entrypoint="sdk-cli")]})
@@ -338,6 +356,21 @@ def test_typed_prompt_excluded():
     check("only a system reminder", cl.typed_prompt(_user("<system-reminder>x</system-reminder>")), None)
     check("empty content", cl.typed_prompt(_user("")), None)
     check("no message", cl.typed_prompt({"type": "user"}), None)
+
+
+def test_typed_prompt_interrupted():
+    check("the interruption marker", cl.typed_prompt(_interrupt(INTERRUPTED)), None)
+    check("the interruption marker for tool use", cl.typed_prompt(_interrupt(INTERRUPTED_TOOL)), None)
+    check("the marker as string content", cl.typed_prompt(_user(INTERRUPTED)), None)
+    check("the marker once its system reminder is stripped",
+          cl.typed_prompt(_user("<system-reminder>\nhook text\n</system-reminder>\n" + INTERRUPTED_TOOL)), None)
+    # the match is on the whole text, so a prompt that quotes the marker is still what the person typed
+    check("a prompt that starts with the marker is still a prompt",
+          cl.typed_prompt(_user(INTERRUPTED + " then fix the build")),
+          ("prompt", "[Request interrupted by user] then fix the build"))
+    check("a prompt that mentions the marker is still a prompt",
+          cl.typed_prompt(_user("why did I see [Request interrupted by user for tool use] there?")),
+          ("prompt", "why did I see [Request interrupted by user for tool use] there?"))
 
 
 def test_invokes_remind_me():
@@ -550,6 +583,32 @@ def test_read_session_later_prompts_cap():
     check("later entries past the cap leave the day alone",
           (session["first"], session["last"], session["prompts"]),
           ("10:00", "10:00", [{"at": "10:00", "kind": "prompt", "text": "fix the build"}]))
+
+
+def test_read_session_interrupted():
+    # what the person types after an interruption is an entry of its own, so it stays while the marker goes
+    session = _session([
+        _user("fix the build", at="10:00"),
+        _assistant("Working on it.", at="10:01", msg_id="m1"),
+        _interrupt(INTERRUPTED, at="10:02"),
+        _user("fix the tests instead", at="10:03"),
+        _assistant([_tool_use("Bash", "git push")], at="10:04", msg_id="m2"),
+        _interrupt(INTERRUPTED_TOOL, at="10:05"),
+        _user("do not push yet", at="10:06"),
+    ])
+    check("interruptions on the day are not prompts, the prompts after them are", session["prompts"],
+          [{"at": "10:00", "kind": "prompt", "text": "fix the build"},
+           {"at": "10:03", "kind": "prompt", "text": "fix the tests instead"},
+           {"at": "10:06", "kind": "prompt", "text": "do not push yet"}])
+
+    session = _session([
+        _user("fix the build", at="10:00"),
+        _interrupt(INTERRUPTED, at="09:14", day="2026-09-05"),
+        _user("merge it", at="09:15", day="2026-09-05"),
+        _interrupt(INTERRUPTED_TOOL, at="08:00", day=TODAY),
+    ])
+    check("interruptions after the day are not later prompts", session["later_prompts"],
+          [{"day": "2026-09-05", "at": "09:15", "kind": "prompt", "text": "merge it"}])
 
 
 def test_read_session_only_later():
@@ -1088,14 +1147,15 @@ def test_no_cli_escaped():
     check("no az or gh call reached the guard", _escaped, [])
 
 
-_TESTS = (test_isolation, test_local_time, test_days_in, test_default_day, test_work_days, test_default_day_work_days,
-          test_transcripts_skip_subagents,
+_TESTS = (test_isolation, test_local_time, test_days_in, test_default_day, test_work_days, test_work_days_interrupted,
+          test_default_day_work_days, test_transcripts_skip_subagents,
           test_typed_prompt_kept, test_typed_prompt_summary_and_command, test_typed_prompt_summary_boundary,
-          test_typed_prompt_excluded,
+          test_typed_prompt_excluded, test_typed_prompt_interrupted,
           test_invokes_remind_me, test_is_question, test_pull_requests_azure, test_pull_requests_github,
           test_add_usage, test_subagent_usage,
           test_result_text, test_read_session, test_read_session_nothing_that_day, test_read_session_cuts,
-          test_read_session_later_prompts, test_read_session_later_prompts_cap, test_read_session_only_later,
+          test_read_session_later_prompts, test_read_session_later_prompts_cap, test_read_session_interrupted,
+          test_read_session_only_later,
           test_read_session_cwd,
           test_collect_left_out_and_dropped, test_collect_groups_by_repository, test_collect_running_sessions,
           test_collect_default_day, test_collect_live_pull_requests_new,
