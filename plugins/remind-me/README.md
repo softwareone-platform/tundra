@@ -8,7 +8,7 @@ What you left open in the Claude Code sessions you ran on a given day, grouped b
 
 ## Use
 
-Ask in your own words, for example "what did I leave open yesterday?", or run `/remind-me:remind-me`, optionally with a day and a language: `/remind-me:remind-me last Friday, in German`. Without a day it reports the most recent day before today that has sessions, so on a Monday it reports Friday.
+Ask in your own words, for example "what did I leave open yesterday?", or run `/remind-me:remind-me`, optionally with a day and a language: `/remind-me:remind-me last Friday, in German`. Without a day it reports the most recent day before today on which you typed a prompt in an interactive session, so on a Monday it reports Friday, and a day that holds only `claude -p` runs is skipped.
 
 You get a summary in the session, and an HTML page that opens in your browser: the day's figures across all repositories, including token usage, a timeline of every session by repository, and everything left open. Select a repository or a session on the timeline for its topics, what it left open, what it finished, and buttons that take you back into it in its own folder.
 

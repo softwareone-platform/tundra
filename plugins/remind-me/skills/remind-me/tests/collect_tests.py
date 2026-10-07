@@ -556,6 +556,41 @@ def test_read_session_only_later():
     check("entries only after the day is None", _session([_user("monday", day=TODAY)]), None)
 
 
+def test_read_session_cwd():
+    # a cd inside the session moves the shell and every later entry's cwd with it, but not where the session lives
+    moved = os.path.join(FOLDER, "sub")
+    session = _session([
+        _user("fix the build", at="10:00", cwd=FOLDER),
+        _assistant("Done.", at="10:30", msg_id="m1", cwd=moved),
+        _user("and the tests", at="11:00", cwd=moved),
+    ])
+    check("a later subfolder cwd on the same day keeps the start folder", session["cwd"], FOLDER)
+
+    started = os.path.join(FOLDER, "started")
+    resumed = os.path.join(FOLDER, "resumed")
+    session = _session([
+        _user("thursday", at="09:00", day=PREV, cwd=started),
+        _user("friday", at="10:00", cwd=resumed),
+    ])
+    check("a session resumed on a later day keeps the folder of its first day", session["cwd"], started)
+
+    first = os.path.join(FOLDER, "first")
+    second = os.path.join(FOLDER, "second")
+    session = _session([
+        {"type": "summary", "summary": "an earlier conversation"},
+        _user("no folder yet", at="09:00", cwd=None),
+        _user("fix the build", at="10:00", cwd=first),
+        _user("and the tests", at="11:00", cwd=second),
+    ])
+    check("leading entries without a cwd are skipped until one has one", session["cwd"], first)
+
+    session = _session([
+        _user("empty folder", at="09:00", cwd=""),
+        _user("fix the build", at="10:00", cwd=first),
+    ])
+    check("a leading empty cwd is skipped like a missing one", session["cwd"], first)
+
+
 # ----- collect: which sessions, grouped how --------------------------------------
 
 def test_collect_left_out_and_dropped():
@@ -1061,6 +1096,7 @@ _TESTS = (test_isolation, test_local_time, test_days_in, test_default_day, test_
           test_add_usage, test_subagent_usage,
           test_result_text, test_read_session, test_read_session_nothing_that_day, test_read_session_cuts,
           test_read_session_later_prompts, test_read_session_later_prompts_cap, test_read_session_only_later,
+          test_read_session_cwd,
           test_collect_left_out_and_dropped, test_collect_groups_by_repository, test_collect_running_sessions,
           test_collect_default_day, test_collect_live_pull_requests_new,
           test_collect_default_day_work_days, test_collect_live_merged_by, test_collect_live_pull_requests_new_author,

@@ -492,7 +492,8 @@ def page(report, digest):
         for session in group["sessions"]:
             panels.append('<section class="panel" id="s-%s" hidden>%s</section>'
                           % (e(session["id"], quote=True), session_panel(group, session, report, labels)))
-    themes = json.dumps({"light": labels["theme_light"], "dark": labels["theme_dark"]}, ensure_ascii=False)
+    # the labels are model-written and land inside <script>, where html escaping does not apply, so no "<" may close it
+    themes = json.dumps({"light": labels["theme_light"], "dark": labels["theme_dark"]}, ensure_ascii=False).replace("<", "\\u003c")
     return ('<!doctype html><html lang="%s"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>remind-me %s</title><style>%s</style></head><body><main class="wrap">'
             '<div class="headline"><h1>%s</h1><button type="button" class="btn ghost theme" id="theme" aria-label="%s">%s</button></div>'

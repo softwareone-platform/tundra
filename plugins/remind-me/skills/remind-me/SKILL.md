@@ -20,7 +20,7 @@ The person ran several sessions, usually one per repository, and has lost track 
 
 Take two things from the arguments, in the person's own words:
 
-- **The day.** "yesterday", "last Friday" or a date, turned into `YYYY-MM-DD` from this machine's local date, which the collector buckets by too: for a relative day, run `date` first and count from the date it prints, since a session that ran past midnight still carries the day it started. With none, leave it out: the collector picks the most recent day before today that has sessions, so a Monday run reports Friday. The report covers one day: when the request names a range, such as "last week", say so and ask which day to report.
+- **The day.** "yesterday", "last Friday" or a date, turned into `YYYY-MM-DD` from this machine's local date, which the collector buckets by too: for a relative day, run `date` first and count from the date it prints, since a session that ran past midnight still carries the day it started. With none, leave it out: the collector picks the most recent day before today with a prompt typed in an interactive session, so a Monday run reports Friday, and a day of only `claude -p` runs is skipped. The report covers one day: when the request names a range, such as "last week", say so and ask which day to report.
 - **The language** of the report. Without one in the request, follow a standing instruction in the person's `CLAUDE.md` files about the language of reports or explanations; without that, it is the language the person has been using with you. The renderer ends the summary with the `language_hint` label, so the hint that a language can be named in the request comes from the report.
 
 ## 2. Collect

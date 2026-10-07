@@ -354,6 +354,28 @@ def test_page_escapes_transcript_text():
         check("%s escaped" % field, ("%s %s" % (field, escaped)) in page, True)
 
 
+def test_theme_labels_cannot_close_script():
+    payload = "x</script><script>alert(1)</script>"
+    for key, side, other in (("theme_light", "light", "dark"), ("theme_dark", "dark", "light")):
+        labels = _labels()
+        labels[key] = payload
+        page = render.page(_report(labels=labels), _digest())
+        # the page's own markup opens and closes exactly one script element, so any extra tag came from the label
+        check("one script opened (%s)" % key, page.lower().count("<script"), 1)
+        check("one script closed (%s)" % key, page.lower().count("</script"), 1)
+        # read to the end of the page, because a raw label would close the script early and so fall outside a slice that stops at "</script>"
+        check("no raw label in the script (%s)" % key, payload in page[page.index("<script>"):], False)
+        script = page[page.index("<script>") + len("<script>"):page.index("</script>")]
+        found = re.search(r"names = (\{.*?\}), button = ", script)
+        check("the names object is in the script (%s)" % key, found is not None, True)
+        if found is None:
+            continue
+        check("no '<' left in the names object (%s)" % key, "<" in found.group(1), False)
+        # JSON reads the escape back as "<", as JavaScript does, so the button still shows the label as written
+        check("the names object decodes to the labels (%s)" % key, json.loads(found.group(1)),
+              {side: payload, other: "[theme_%s]" % other})
+
+
 def test_running_session_has_no_resume():
     running = _session("run1", first="11:00", last="12:00", running="running")
     page = render.page(_report({"s1": _body(), "run1": _body()}),
@@ -699,7 +721,8 @@ _TESTS = (test_valid_report_has_no_problems, test_missing_top_level_fields, test
           test_tokens, test_compact, test_compact_top_unit, test_figures, test_figures_on_page,
           test_windows_detection, test_resume_command, test_terminal_command, test_deep_link,
           test_rows_for, test_ordered,
-          test_page_escapes_transcript_text, test_running_session_has_no_resume, test_repository_resume_last,
+          test_page_escapes_transcript_text, test_theme_labels_cannot_close_script,
+          test_running_session_has_no_resume, test_repository_resume_last,
           test_current_repository_marked, test_overview_folds_past_limit, test_overview_empty,
           test_bars_carry_no_count,
           test_repository_state_unread, test_repository_live_chips, test_each_button_lives_in_one_place,

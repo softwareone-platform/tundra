@@ -254,6 +254,10 @@ def read_session(path, day):
                 entry = json.loads(line)
             except ValueError:
                 continue
+            if not session["cwd"]:
+                # the folder the session started in is where Claude Code keeps it and where a resume belongs,
+                # while a later cwd only follows the shell wherever a command moved it
+                session["cwd"] = entry.get("cwd")
             when = local_time(entry.get("timestamp", ""))
             if when and when[0] > day and entry.get("type") == "user" and len(session["later_prompts"]) < LATER_PROMPTS:
                 # an answer given after the day still settles what the day left open: the report is as of now
@@ -266,7 +270,6 @@ def read_session(path, day):
             clock = when[1]
             session["first"] = session["first"] or clock
             session["last"] = clock
-            session["cwd"] = entry.get("cwd") or session["cwd"]
             session["entrypoint"] = entry.get("entrypoint") or session["entrypoint"]
             branch = entry.get("gitBranch")
             if branch and branch != "HEAD" and branch not in branches:
