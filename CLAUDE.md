@@ -22,6 +22,7 @@ scripts/check-readme-translations.py  fails when a README translation is behind 
 .githooks/pre-push                  runs that check on every pushed commit
 README.md                           the English README, translated by README.zh-TW.md and README.zh-CN.md
 docs/whoami/                        the translations' whoami screenshots
+docs/banner/                        the root README's banner, a light and a dark version shared by all three READMEs
 LICENSE                             covers everything under the root
 ```
 

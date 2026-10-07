@@ -1,7 +1,10 @@
-<!-- translated from README.md, source sha256 b503adff85d3fda176bc475e76aad822785ac609488e280c3414edacaec610aa; see CLAUDE.md "Translations of the root README" before editing -->
-# tundra
-
+<!-- translated from README.md, source sha256 f05cbadf5dc6ad95d6c57f2f7f19d74dd72665e08f8102068173b58f86e2fbab; see CLAUDE.md "Translations of the root README" before editing -->
 <div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/banner/banner-dark.jpg">
+  <img alt="tundra, Claude Code plugins" src="docs/banner/banner-light.jpg">
+</picture>
 
 [![Claude Code plugin marketplace](https://img.shields.io/badge/Claude%20Code-plugin%20marketplace-blue)](#install) [![License: Apache-2.0](https://img.shields.io/github/license/softwareone-platform/tundra)](LICENSE)
 

@@ -1,6 +1,9 @@
-# tundra
-
 <div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/banner/banner-dark.jpg">
+  <img alt="tundra, Claude Code plugins" src="docs/banner/banner-light.jpg">
+</picture>
 
 [![Claude Code plugin marketplace](https://img.shields.io/badge/Claude%20Code-plugin%20marketplace-blue)](#install) [![License: Apache-2.0](https://img.shields.io/github/license/softwareone-platform/tundra)](LICENSE)
 
