@@ -1,4 +1,4 @@
-<!-- translated from README.md, source sha256 5d2e12f6ff28601b43624a519b159a27476b27268551c6c54de0227d5cf7b61e; see CLAUDE.md "Translations of the root README" before editing -->
+<!-- translated from README.md, source sha256 b503adff85d3fda176bc475e76aad822785ac609488e280c3414edacaec610aa; see CLAUDE.md "Translations of the root README" before editing -->
 # tundra
 
 <div align="center">
@@ -57,10 +57,13 @@ SoftwareOne Platform 的 Claude Code plugin marketplace。
 | Plugin | 做什么 | Skill |
 |---|---|---|
 | [`whoami`](plugins/whoami/README.md) | 根据你的代码、你的 prompt 和你的 CLAUDE.md 做一份自我评估，输出为 HTML 报告 | `/whoami:whoami`，只有你能启动 |
+| [`remind-me`](plugins/remind-me/README.md) | 你在某一天运行过的 session 还留下哪些没做完的事，逐一对照每个 pull request 和 branch 的实时状态，并提供回到每个 session 的入口 | `remind-me` |
 
-它读取以你的名义交付的代码、你给 Claude 的 prompt，以及你的 `CLAUDE.md`，逐一检验每个反复出现的模式有没有其他原因能解释，再总结出哪一类问题你稳定做对、哪一类问题你稳定漏掉。它只读你指定的 repo，你的 prompt 和指令也只在你同意之后才会读。报告会用你要求的语言撰写。
+`whoami` 读取以你的名义交付的代码、你给 Claude 的 prompt，以及你的 `CLAUDE.md`，逐一检验每个反复出现的模式有没有其他原因能解释，再总结出哪一类问题你稳定做对、哪一类问题你稳定漏掉。它只读你指定的 repo，你的 prompt 和指令也只在你同意之后才会读。报告会用你要求的语言撰写。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/whoami/report-overview-dark.zh-CN.png">
   <img alt="一份针对两个虚构 repo 的 whoami 报告：读取范围的时间线、只有一个轴的结论，以及一张流程图" src="docs/whoami/report-overview-light.zh-CN.png">
 </picture>
+
+`remind-me` 读取 Claude Code 保存在这台电脑上的 transcript，并查询其中提到的每个 pull request 和 branch 的实时状态，所以当天下午就合并的 pull request 不会被报告成仍在等待。它会在 session 里写一份摘要，并生成一个按 repo 排列当天时间线的 HTML 页面，语言由你指定。

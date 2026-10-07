@@ -56,10 +56,13 @@ Four plugins that take a ticket to a reviewed pull request. They live in [issue-
 | Plugin | What it does | Skills |
 |---|---|---|
 | [`whoami`](plugins/whoami/README.md) | A self-assessment from your code, your prompts, and your CLAUDE.md, as an HTML report | `/whoami:whoami`, which only you can start |
+| [`remind-me`](plugins/remind-me/README.md) | What you left open in the sessions you ran on a given day, checked against the live state of each pull request and branch, with a way back into each session | `remind-me` |
 
-It reads the code that shipped under your name, the prompts you gave Claude, and your `CLAUDE.md`, tests each recurring pattern against what could explain it away, and concludes what kind of question you reliably get right and what kind you reliably miss. It reads only the repositories you name, and your prompts and instructions only if you agree. It writes the report in whichever language you ask for.
+`whoami` reads the code that shipped under your name, the prompts you gave Claude, and your `CLAUDE.md`, tests each recurring pattern against what could explain it away, and concludes what kind of question you reliably get right and what kind you reliably miss. It reads only the repositories you name, and your prompts and instructions only if you agree. It writes the report in whichever language you ask for.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="plugins/whoami/docs/report-overview-dark.png">
   <img alt="A whoami report on two fictional repositories: a timeline of what was read, the conclusion with one axis, and a flow diagram" src="plugins/whoami/docs/report-overview-light.png">
 </picture>
+
+`remind-me` reads the transcripts Claude Code keeps on this machine and looks up the live state of every pull request and branch they named, so a pull request merged the same afternoon is not reported as pending. It writes a summary in the session and an HTML page with a timeline of the day by repository, in whichever language you ask for.

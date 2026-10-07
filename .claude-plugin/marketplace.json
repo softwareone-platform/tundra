@@ -1,6 +1,6 @@
 {
   "name": "tundra",
-  "description": "Claude Code plugins from SoftwareOne Platform: the issue-to-PR toolkit of adversarial review, test authoring, PR lifecycle, and the pipeline that chains them, and a self-assessment from your own commits",
+  "description": "Claude Code plugins from SoftwareOne Platform: the issue-to-PR toolkit of adversarial review, test authoring, PR lifecycle, and the pipeline that chains them, a self-assessment from your own commits, and what your sessions left open on a given day",
   "owner": {
     "name": "pbc-swo",
     "url": "https://github.com/softwareone-platform/tundra"
@@ -54,6 +54,11 @@
       "name": "whoami",
       "description": "A self-assessment from your code, your prompts to Claude, and your CLAUDE.md, testing each pattern against what could explain it away before concluding how you work",
       "source": "./plugins/whoami"
+    },
+    {
+      "name": "remind-me",
+      "description": "What you left open in the Claude Code sessions you ran on a given day, grouped by repository and checked against the live state of every pull request and branch, with a way back into each session",
+      "source": "./plugins/remind-me"
     }
   ]
 }
