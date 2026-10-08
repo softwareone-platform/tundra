@@ -39,7 +39,7 @@ A session that is still running is included, and so is today's session when it w
 
 Read the digest yourself, where the collector wrote it, to its last line, and write none of it to another file: it holds excerpts of the transcripts, sensitive data included, and the render step deletes it. The Read tool stops at 2,000 lines and an ordinary day's digest runs past that, so read on with `offset` until the file ends, and check that the sessions you read add up to the count the collector printed. A judgement made from the first page silently leaves out the repositories that sort last.
 
-For each session, `prompts` are what the person typed, in order, with the time. A prompt of kind `summary` is the summary a compaction wrote, and it is the best account of what came before it. `questions` are the session's replies that ended in a question or a request for a decision, and `last_reply` is where the session stopped. Judge from these alone: the report is a snapshot of the day, and what a resumed session did on a later day belongs to that day's report. The digest's `later_prompts` are not read.
+For each session, `prompts` are what the person typed, in order, with the time. A prompt of kind `summary` is the summary a compaction wrote, and it is the best account of what came before it. `questions` are the session's replies that ended in a question or a request for a decision, and `last_reply` is where the session stopped. Judge from these alone: the report is a snapshot of the day, and what a resumed session did on a later day belongs to that day's report.
 
 ## 4. Judge each session
 

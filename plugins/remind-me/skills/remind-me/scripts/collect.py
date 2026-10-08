@@ -34,7 +34,6 @@ SUMMARY_HEAD = 1000
 SUMMARY_TAIL = 3000
 QUESTION_TAIL = 700
 LAST_TAIL = 1500
-LATER_PROMPTS = 20
 LIVE_TIMEOUT = 60
 
 COMPACTION_PREFIX = "This session is being continued from a previous conversation"
@@ -244,7 +243,6 @@ def read_session(path, day):
         "pull_requests": [],
         "pull_requests_new": [],
         "last_reply": None,
-        "later_prompts": [],
         "usage": {},
     }
     seen_usage = set()
@@ -262,12 +260,6 @@ def read_session(path, day):
                 # while a later cwd only follows the shell wherever a command moved it
                 session["cwd"] = entry.get("cwd")
             when = local_time(entry.get("timestamp", ""))
-            if when and when[0] > day and entry.get("type") == "user" and len(session["later_prompts"]) < LATER_PROMPTS:
-                # an answer given after the day still settles what the day left open: the report is as of now
-                later = typed_prompt(entry)
-                if later and not invokes_remind_me(later[1]):
-                    session["later_prompts"].append({"day": when[0], "at": when[1], "kind": later[0], "text": later[1]})
-                continue
             if not when or when[0] != day:
                 continue
             clock = when[1]
