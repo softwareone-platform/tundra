@@ -1,5 +1,7 @@
 # remind-me
 
+[English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
+
 What you left open in the Claude Code sessions you ran on a given day, grouped by repository and checked against the live state of the pull requests and branches they named, with a way back into each session in its own folder.
 
 <picture>
