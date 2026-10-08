@@ -1,6 +1,7 @@
 """Render a remind-me report as a local HTML page and print its summary for the session.
 
-The model writes only what needs judgement: each session's topics, what got done, and what is still open.
+The model writes only what needs judgement: each session's topics, what it decided, did and found out, what is still open,
+and an emoji per repository.
 Everything countable comes from the digest the collector wrote, so no figure on the page is the model's:
 the times, the token usage, the pull request states, the folders, and the commands that reopen a session.
 
@@ -26,13 +27,18 @@ EXIT_SCHEMA = 2
 LABELS = ("sessions", "repositories", "prompts", "pull_requests", "tokens", "tokens_cached", "output",
           "done", "running", "all_open", "resume", "copy_resume", "new_session", "copy_terminal", "copied", "theme", "theme_light", "theme_dark",
           "uncommitted", "unpushed", "nothing_open", "nothing_happened", "as_of", "language_hint", "resume_last", "here", "state_unread", "copy_path",
-          "show_all", "repository_list", "cache_read", "cache_write", "uncached_input", "decision", "action", "question",
+          "show_all", "repository_list", "decided", "found", "cache_read", "cache_write", "uncached_input", "decision", "action", "question",
           "level_day", "level_repository", "level_session", "session_position", "still_open", "what_happened",
           "duration", "duration_minutes", "timeline", "session_count", "running_count", "cannot_resume", "token_mix")
 # the labels that carry numbers or names, and the placeholders each must keep so the renderer can fill them in
 PLACEHOLDERS = {"session_position": ("n", "total"), "duration": ("hours", "minutes"), "duration_minutes": ("minutes",),
                 "session_count": ("n", "repository"), "running_count": ("n",)}
 KINDS = ("decision", "action", "question")
+# each open kind has a twin among what happened: a decision is decided, an action done, a question found
+TWINS = (("decided", "decision", "c"), ("done", "action", "d"), ("found", "question", "f"))
+TOP_KEYS = ("day", "language", "headline", "labels", "sessions", "marks")
+SESSION_KEYS = ("topics", "open", "decided", "done", "found")
+ITEM_KEYS = ("kind", "text", "detail")
 # a kind with more open items than this shows its first ones and folds the rest behind a button
 OVERVIEW_LIMIT = 10
 
@@ -56,21 +62,84 @@ def problems_in(report, digest):
         lost = [name for name in names if "{%s}" % name not in str(report["labels"].get(label, ""))]
         if label not in missing and lost:
             found.append("label %s must keep %s" % (label, ", ".join("{%s}" % name for name in lost)))
+    # a misspelt key would otherwise drop its content without a word
+    found += ["unknown top-level field: %s" % key for key in report if key not in TOP_KEYS]
     known = {session["id"] for group in digest.get("repositories", []) for session in group["sessions"]}
     for session_id, body in report["sessions"].items():
         if session_id not in known:
             found.append("session %s is not in the digest" % session_id)
             continue
-        if not body.get("topics"):
-            found.append("session %s has no topics" % session_id)
-        for item in body.get("open", []):
+        if not isinstance(body, dict):
+            found.append("session %s must be an object" % session_id)
+            continue
+        found += ["session %s: unknown field %s" % (session_id, key) for key in body if key not in SESSION_KEYS]
+        if not body.get("topics") or not lines_ok(body.get("topics")):
+            found.append("session %s needs topics, a list of non-blank strings" % session_id)
+        for key in ("decided", "done", "found"):
+            if key in body and not lines_ok(body[key]):
+                found.append("session %s: %s must be a list of non-blank strings" % (session_id, key))
+        items = body.get("open", [])
+        if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+            found.append("session %s: open must be a list of objects" % session_id)
+            continue
+        for item in items:
+            found += ["session %s: an open item has an unknown field %s" % (session_id, key) for key in item if key not in ITEM_KEYS]
             if item.get("kind") not in KINDS:
                 found.append("session %s: open item kind must be one of %s" % (session_id, ", ".join(KINDS)))
-            if not str(item.get("text", "")).strip():
+            if not isinstance(item.get("text"), str) or not item["text"].strip():
                 found.append("session %s: an open item has no text" % session_id)
+            if "detail" in item and not isinstance(item["detail"], str):
+                found.append("session %s: an open item's detail must be a string" % session_id)
     for session_id in sorted(known - set(report["sessions"])):
         found.append("session %s from the digest has no entry in the report" % session_id)
-    return found
+    # one line per problem, however many items share it
+    return list(dict.fromkeys(found))
+
+
+def lines_ok(value):
+    return isinstance(value, list) and all(isinstance(line, str) and line.strip() for line in value)
+
+
+def emoji_like(value):
+    """One short emoji: no letters or digits, no flag (Windows draws one as two letters), and something from the emoji blocks."""
+    if not isinstance(value, str) or not value.strip() or len(value) > 8:
+        return False
+    points = [ord(char) for char in value]
+    if any(char.isascii() and char.isalnum() for char in value) or any(0x1F1E6 <= point <= 0x1F1FF for point in points):
+        return False
+    return any(0x1F300 <= point <= 0x1FAFF or 0x2600 <= point <= 0x27BF for point in points)
+
+
+def same_path(left, right):
+    """The model copies Windows paths through JSON escaping, so case, slash direction and a trailing separator are not held against it."""
+    def plain(path):
+        return path.replace("\\", "/").rstrip("/").casefold()
+    return plain(left) == plain(right)
+
+
+def marks(report, groups):
+    """Each repository's mark, decided once: the model's emoji where it is usable and not already taken on the page, else nothing."""
+    given = report.get("marks")
+    chosen, used, ignored = {}, set(), []
+    if given is not None and not isinstance(given, dict):
+        return chosen, ["marks is not an object"]
+    given = given or {}
+    for key, value in given.items():
+        if not any(same_path(key, group["path"]) for group in groups):
+            ignored.append("%s (not a repository in the digest)" % key)
+    for group in groups:
+        value = next((value for key, value in given.items() if same_path(key, group["path"])), None)
+        if value is None:
+            continue
+        bare = value.replace("\ufe0f", "") if isinstance(value, str) else value
+        if not emoji_like(value):
+            ignored.append("%s (not one emoji)" % group["path"])
+        elif bare in used:
+            ignored.append("%s (emoji already used)" % group["path"])
+        else:
+            chosen[group["path"]] = value
+            used.add(bare)
+    return chosen, ignored
 
 
 def tokens(usage_buckets):
@@ -233,7 +302,9 @@ def icon(name):
 
 
 def tile(group):
-    """The repository's mark; the model chooses an emoji per repository later, and its initial stands in until then."""
+    """The repository's mark everywhere it is drawn: the emoji page() resolved for it, or its initial."""
+    if group.get("mark"):
+        return '<span class="tile emoji" aria-hidden="true">%s</span>' % e(group["mark"])
     return '<span class="tile" aria-hidden="true">%s</span>' % e(name_of(group)[:1].upper())
 
 
@@ -243,9 +314,16 @@ def session_name(report, session):
 
 def code_chips(text):
     """Ticket keys, pull requests, branches and commands read as code, so they stand out in a line of prose."""
-    escaped = e(text)
-    return re.sub(r"(?<![\w/-])(![0-9]+|#[0-9]+|[A-Z][A-Z0-9]+-[0-9]+(?:-[0-9]+)*|(?:release|feature|bugfix|hotfix)/[\w.-]+|[\w-]+\.py(?: --[\w-]+)*)(?![\w-])",
-                  r"<code>\1</code>", escaped)
+    # the model writes in Markdown habits, so a backticked span is code as it stands and the patterns run only outside it
+    parts = re.split(r"`([^`\n]+)`", text)
+    out = []
+    for number, part in enumerate(parts):
+        if number % 2:
+            out.append("<code>%s</code>" % e(part))
+        else:
+            out.append(re.sub(r"(?<![\w/-])(![0-9]+|#[0-9]+|[A-Z][A-Z0-9]+-[0-9]+(?:-[0-9]+)*|(?:release|feature|bugfix|hotfix)/[\w.-]+|[\w-]+\.py(?: --[\w-]+)*)(?![\w-])",
+                              r"<code>\1</code>", e(part)))
+    return "".join(out)
 
 
 def item_body(item, where=""):
@@ -291,10 +369,20 @@ def lane(title, cards, empty):
     return '<p class="lanetitle">%s</p>%s' % (e(title), content)
 
 
-def lanes(pairs, done, labels, linked):
-    """What is still open, then what happened; the second row holds done until the report gains decided and found."""
-    rows = [item_row('<div class="t">%s</div>' % code_chips(line), session, "d%d" % number, linked) for line, session, number in done]
-    happened = [card("done", icon("action") + e(labels["done"]), rows, labels)] if rows else []
+def happened_cards(entries, report, labels, linked, where):
+    """What happened, one card per list that has lines, each carrying the icon and colour of the open kind it answers."""
+    cards = []
+    for key, kind, prefix in TWINS:
+        rows = [item_row('<div class="t">%s</div>%s' % (code_chips(line), where(group, session)), session, "%s%d" % (prefix, number), linked)
+                for group, session in entries for number, line in enumerate(body_of(report, session).get(key, []))]
+        if rows:
+            cards.append(card("twin " + kind, icon(kind) + e(labels[key]), rows, labels))
+    return cards
+
+
+def lanes(pairs, entries, report, labels, linked):
+    """What is still open, then what happened."""
+    happened = happened_cards(entries, report, labels, linked, lambda group, session: "")
     return (lane(labels["still_open"], open_cards(pairs, labels, False, lambda group, session: "", linked), labels["nothing_open"])
             + lane(labels["what_happened"], happened, labels["nothing_happened"]))
 
@@ -366,7 +454,21 @@ def overview_panel(digest, report, labels, groups, span):
     last = max(session["last"] for session in all_sessions(digest))
     return (trail(("", e(labels["all_open"]))), head
             + timeline(groups, span, labels, '%s <span>%s–%s</span>' % (e(labels["timeline"]), e(first), e(last)), report)
-            + '<p class="lanetitle">%s</p><div class="cards">%s</div>' % (e(labels["still_open"]), "".join(cards)))
+            + '<p class="lanetitle">%s</p><div class="cards">%s</div>' % (e(labels["still_open"]), "".join(cards))
+            + folded_happened(groups, report, labels))
+
+
+def folded_happened(groups, report, labels):
+    entries = [(group, session) for group, _ in groups for session in by_time(group)]
+    where = lambda group, session: '<div class="where">%s%s</div>' % (tile(group), e(name_of(group)))
+    cards = happened_cards(entries, report, labels, True, where)
+    if not cards:
+        return ""
+    counts = "".join('<span class="kind %s">%s%s %d</span>' % (kind, icon(kind), e(labels[key]), total)
+                     for key, kind, _ in TWINS
+                     for total in [sum(len(body_of(report, session).get(key, [])) for _, session in entries)] if total)
+    return ('<details class="folded"><summary class="lanetitle">%s%s<span class="counts">%s</span></summary><div class="cards">%s</div></details>'
+            % (icon("chevron"), e(labels["what_happened"]), counts, "".join(cards)))
 
 
 def repository_head(group, labels, running):
@@ -404,12 +506,11 @@ def repository_head(group, labels, running):
 def repository_panel(group, slug, report, labels, span):
     sessions = by_time(group)
     pairs = [(item, group, session, number) for session in sessions for number, item in enumerate(body_of(report, session).get("open", []))]
-    done = [(line, session, number) for session in sessions for number, line in enumerate(body_of(report, session).get("done", []))]
     running = sum(1 for session in sessions if session.get("running"))
     return (trail(("", e(labels["all_open"])), ("r-" + slug, tile(group) + e(name_of(group)))),
             repository_head(group, labels, running)
             + timeline([(group, slug)], span, labels, e(fill(labels["session_count"], n=len(sessions), repository=name_of(group))), report)
-            + lanes(pairs, done, labels, True))
+            + lanes(pairs, [(group, session) for session in sessions], report, labels, True))
 
 
 def session_panel(group, slug, session, report, labels, span):
@@ -432,7 +533,7 @@ def session_panel(group, slug, session, report, labels, span):
     return (trail(("", e(labels["all_open"])), ("r-" + slug, tile(group) + e(name_of(group))), ("s-" + session["id"], session_name(report, session))),
             head
             + timeline([(group, slug)], span, labels, e(fill(labels["session_count"], n=len(sessions), repository=name_of(group))), report, selected=session["id"])
-            + lanes(pairs, [(line, session, number) for number, line in enumerate(body.get("done", []))], labels, False))
+            + lanes(pairs, [(group, session)], report, labels, False))
 
 
 def sidebar(digest, report, labels, groups):
@@ -460,6 +561,7 @@ def badge(number):
 
 
 # Lucide icons (ISC, some derived from Feather under MIT), copied as published; the plugin's NOTICE carries both licences
+# Lucide icons (ISC, some derived from Feather under MIT), copied as published; the plugin's NOTICE carries both licences
 ICONS = {
     "list": "<path d='M3 5h.01'/><path d='M3 12h.01'/><path d='M3 19h.01'/><path d='M8 5h13'/><path d='M8 12h13'/><path d='M8 19h13'/>",
     "decision": "<path d='M12 13v8'/><path d='M12 3v3'/><path d='M2.354 10.354a1.207 1.207 0 0 1 0-1.708l2.06-2.06A2 2 0 0 1 5.828 6h12.344a2 2 0 0 1 1.414.586l2.06 2.06a1.207 1.207 0 0 1 0 1.708l-2.06 2.06a2 2 0 0 1-1.414.586H5.828a2 2 0 0 1-1.414-.586z'/>",
@@ -480,7 +582,7 @@ ICONS = {
     "sun": "<circle cx='12' cy='12' r='4'/><path d='M12 2v2'/><path d='M12 20v2'/><path d='m4.93 4.93 1.41 1.41'/><path d='m17.66 17.66 1.41 1.41'/><path d='M2 12h2'/><path d='M20 12h2'/><path d='m6.34 17.66-1.41 1.41'/><path d='m19.07 4.93-1.41 1.41'/>",
     "moon": "<path d='M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401'/>",
     "chevron": "<path d='m9 18 6-6-6-6'/>",
-    "mark": "<path d='M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z'/>",
+    "mark": "<path d='M12 6v6l1.5.8'/><path d='M12.338 21.994a10 10 0 1 1 9.587-8.767'/><path d='M14 18h8'/><path d='m18 22-4-4 4-4'/>",
 }
 
 
@@ -625,11 +727,18 @@ svg.link path { fill:none; stroke:var(--lv); stroke-width:2 } svg.link circle { 
 .kindhead { margin:0; display:flex; gap:8px; align-items:center; font-size:14px }
 .kind { display:inline-flex; gap:5px; align-items:center; font-size:12px; font-weight:600; padding:2px 8px; border-radius:6px; white-space:nowrap }
 .kind .i { width:13px; height:13px; vertical-align:0 }
-.decision .kind { background:var(--decision-bg); color:var(--decision) }
-.action .kind { background:var(--action-bg); color:var(--action) }
-.question .kind { background:var(--question-bg); color:var(--question) }
-.done .kind { background:transparent; color:var(--done); border:1px solid currentColor }
-.done .t { font-weight:400; color:var(--soft) }
+.decision .kind, .kind.decision { background:var(--decision-bg); color:var(--decision) }
+.action .kind, .kind.action { background:var(--action-bg); color:var(--action) }
+.question .kind, .kind.question { background:var(--question-bg); color:var(--question) }
+.twin .kind { background:transparent; border:1px solid currentColor }
+.twin .t { font-weight:400; color:var(--soft) }
+.tile.emoji { background:color-mix(in srgb, var(--accent) 10%, transparent); font-weight:400 }
+.folded > summary { cursor:pointer; list-style:none; margin:4px 0 0 }
+.folded > summary::-webkit-details-marker { display:none }
+.folded > summary .i { transition:transform .15s } .folded[open] > summary .i { transform:rotate(90deg) }
+.folded > summary .counts { display:inline-flex; gap:6px; letter-spacing:0; text-transform:none; font-weight:600 }
+.folded > summary:hover { color:var(--ink) }
+.folded[open] > .cards { margin-top:22px }
 .items { margin:0; padding:0; list-style:none; display:grid; gap:12px }
 .items li { border-top:1px solid var(--line); padding-top:12px; min-width:0 }
 .items li:first-child { border-top:0; padding-top:0 }
@@ -723,19 +832,26 @@ SCRIPT = """
   }
   window.addEventListener('load', function () { setTimeout(draw, 200); });
   window.addEventListener('resize', draw);
-  window.addEventListener('hashchange', function () { route(); window.scrollTo(0, 0); });
+  // the item a click came from is marked only once its page is shown and scrolled to the top, or the reset would scroll it away again
+  var pending = null;
+  function arrive() { window.scrollTo(0, 0); if (pending) { point(pending); pending = null; } }
+  window.addEventListener('hashchange', function () { route(); arrive(); });
   route();
   function point(anchor) {
     var item = anchor && document.getElementById(anchor);
     if (!item) { return; }
     item.classList.remove('flash'); void item.offsetWidth; item.classList.add('flash');
-    item.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    item.scrollIntoView({ block: 'center' });
   }
-  function go(key) { if (key) { location.hash = key; } else { history.pushState(null, '', location.pathname + location.search); route(); } }
+  function go(key, anchor) {
+    pending = anchor || null;
+    if (location.hash.replace(/^#/, '') === key) { arrive(); return; }
+    if (key) { location.hash = key; } else { history.pushState(null, '', location.pathname + location.search); route(); arrive(); }
+  }
   window.addEventListener('popstate', route);
   document.addEventListener('keydown', function (event) {
     var item = event.target.closest('li[data-go]');
-    if (item && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); go(item.getAttribute('data-go')); point(item.getAttribute('data-item')); }
+    if (item && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); go(item.getAttribute('data-go'), item.getAttribute('data-item')); }
   });
   document.addEventListener('click', function (event) {
     var set = event.target.closest('[data-theme-set]');
@@ -752,7 +868,7 @@ SCRIPT = """
       return;
     }
     var target = event.target.closest('[data-go]');
-    if (target) { go(target.getAttribute('data-go')); point(target.getAttribute('data-item')); }
+    if (target) { go(target.getAttribute('data-go'), target.getAttribute('data-item')); }
   });
 })();
 """
@@ -760,7 +876,11 @@ SCRIPT = """
 
 def page(report, digest):
     labels = report["labels"]
-    groups = [(group, slugs(digest["repositories"])[group["path"]]) for group in ordered(digest, report)]
+    names = slugs(digest["repositories"])
+    page_order = ordered(digest, report)
+    chosen, _ = marks(report, page_order)
+    # a copy of each repository carries its mark, so every place that draws it shows the same one
+    groups = [(dict(group, mark=chosen.get(group["path"])), names[group["path"]]) for group in page_order]
     sessions = all_sessions(digest)
     span = ((min(minutes(session["first"]) for session in sessions) // 60) * 60, (max(minutes(session["last"]) for session in sessions) // 60 + 1) * 60)
     title = "remind-me %s" % report["day"]
@@ -824,6 +944,9 @@ def main(argv=None):
         return EXIT_SCHEMA
     with open(args.out, "w", encoding="utf-8") as handle:
         handle.write(page(report, digest))
+    _, ignored = marks(report, ordered(digest, report))
+    if ignored:
+        sys.stderr.write("marks ignored, initials used instead: %s\n" % "; ".join(ignored))
     print(summary(report, digest, args.out))
     if args.open:
         webbrowser.open(pathlib.Path(args.out).resolve().as_uri())
