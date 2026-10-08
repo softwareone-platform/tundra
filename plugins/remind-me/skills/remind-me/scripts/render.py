@@ -561,8 +561,10 @@ def sidebar(digest, report, labels, groups):
         for session in by_time(group):
             count = len(body_of(report, session).get("open", []))
             running = '<i class="dot" title="%s" aria-label="%s"></i>' % (e(labels["running"], quote=True), e(labels["running"], quote=True)) if session.get("running") else ""
+            # the panel cuts the name to fit, so hovering shows it whole
             children.append('<button type="button" class="nav child" data-go="s-%s" title="%s">%s%s%s</button>'
-                            % (e(session["id"], quote=True), e("%s-%s" % (session["first"], session["last"]), quote=True), '<span class="nm">%s</span>' % session_name(report, session),
+                            % (e(session["id"], quote=True), e("%s %s" % (session["first"], body_of(report, session)["topics"][0]), quote=True),
+                               '<span class="nm">%s</span>' % session_name(report, session),
                                running, '<span class="badge small">%s</span>' % badge(count) if count else ""))
         rows.append('<div class="children" data-children="%s" hidden>%s</div>' % (e(slug, quote=True), "".join(children)))
     return ('<aside class="card side"><div class="day">%s</div><div class="asof">%s %s</div>%s<hr><div class="sec">%s</div>%s</aside>'
