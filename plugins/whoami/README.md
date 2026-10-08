@@ -1,5 +1,7 @@
 # whoami
 
+[English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
+
 A self-assessment built from what you produced: the code that shipped under your name, whether you typed it or directed a model to, the prompts you gave Claude, and the instructions you left it in `CLAUDE.md`. It finds the patterns that recur, tests each one against what could explain it away, and concludes what they say about how you work: the kind of question you reliably get right, and the kind you reliably miss. Every pattern in the report comes with the commits, prompts, or rules it came from. A strength also lists its exceptions, the changes of yours where you did not do the thing it credits you with, so no strength reads as more consistent than your work was. It gives no type, score, or rating.
 
 <picture>
@@ -38,6 +40,20 @@ It does not ask you to confirm its findings. For each pattern it looks for the c
 It assesses the person running it. The material it reads and the context it asks for belong to the person who did the work, so pointing it at someone else's commits produces guesses. It starts from the git identity configured in your repositories, and it stops, and writes no report, when an identity you confirm is not linked to that one.
 
 ## What it reads and what it sends
+
+```mermaid
+flowchart TB
+    subgraph machine["This machine"]
+        identity["identity.py<br>links what you confirm to your git config"] -- only your addresses --> code["Your repositories, through git only<br>your commits, their diffs, the code around them"]
+        transcripts["Transcripts<br>~/.claude/projects"] --> prompts["extract_prompts.py<br>only the text you typed, in the repositories you chose"]
+        rules["Instruction files<br>CLAUDE.md and .claude/rules/, the lines you wrote"]
+        render["render_report.py<br>checks the identities again, then writes"] --> report["The report in the plugin's data folder<br>and a summary in the session"]
+    end
+    code --> model["The model behind your session<br>and fresh subagents reading the code in parallel"]
+    prompts --> model
+    rules --> model
+    model -- report document --> render
+```
 
 **Code** is read through git only: the history, the diffs of your commits, and the code around them at each commit. It never reads code from your working tree, so untracked and ignored files such as local settings and secrets stay out of the analysis. The only files it reads from the working tree are the instruction files named below.
 
