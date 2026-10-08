@@ -496,8 +496,8 @@ def repository_head(group, labels, running):
             last = max(resumable, key=lambda session: session["last"])
             buttons += button_link(deep_link(last["cwd"], "/resume " + last["id"]), icon("play") + e(labels["resume_last"]), "%s %s-%s" % (last["cwd"], last["first"], last["last"]))
         buttons += (button_link(deep_link(group["path"]), icon("plus") + e(labels["new_session"]), group["path"], ghost=True)
-                    + copy_button(terminal_command(group["path"]), icon("terminal"), labels["copy_terminal"], labels)
-                    + copy_button(group["path"], icon("folder"), labels["copy_path"], labels))
+                    + copy_button(terminal_command(group["path"]), labels["copy_terminal"], labels)
+                    + copy_button(group["path"], labels["copy_path"], labels))
     return ('<section class="card head scope">%s<div class="top">%s<div class="grow"><h2>%s</h2><div class="path">%s</div></div><div class="buttons">%s</div></div>'
             '<div class="chips">%s</div></section>'
             % (eyebrow("repo", labels["level_repository"]), tile(group), e(name_of(group)), e(group["path"]), buttons, "".join(chips)))
@@ -521,7 +521,7 @@ def session_panel(group, slug, session, report, labels, span):
         actions = '<span class="chip live big">%s%s</span>' % ('<i class="dot"></i>', e(labels["cannot_resume"]))
     elif session.get("cwd"):
         actions = (button_link(deep_link(session["cwd"], "/resume " + session["id"]), icon("play") + e(labels["resume"]), session["cwd"])
-                   + copy_button(resume_command(session["cwd"], session["id"]), icon("copy") + e(labels["copy_resume"]), labels["copy_resume"], labels, wide=True))
+                   + copy_button(resume_command(session["cwd"], session["id"]), labels["copy_resume"], labels))
     else:
         actions = ""
     head = ('<section class="card head scope">%s<div class="top"><div class="grow"><h2>%s–%s <span class="span">%s</span></h2>'
@@ -562,6 +562,7 @@ def badge(number):
 
 # Lucide icons (ISC, some derived from Feather under MIT), copied as published; the plugin's NOTICE carries both licences
 # Lucide icons (ISC, some derived from Feather under MIT), copied as published; the plugin's NOTICE carries both licences
+# Lucide icons (ISC, some derived from Feather under MIT), copied as published; the plugin's NOTICE carries both licences
 ICONS = {
     "list": "<path d='M3 5h.01'/><path d='M3 12h.01'/><path d='M3 19h.01'/><path d='M8 5h13'/><path d='M8 12h13'/><path d='M8 19h13'/>",
     "decision": "<path d='M12 13v8'/><path d='M12 3v3'/><path d='M2.354 10.354a1.207 1.207 0 0 1 0-1.708l2.06-2.06A2 2 0 0 1 5.828 6h12.344a2 2 0 0 1 1.414.586l2.06 2.06a1.207 1.207 0 0 1 0 1.708l-2.06 2.06a2 2 0 0 1-1.414.586H5.828a2 2 0 0 1-1.414-.586z'/>",
@@ -569,9 +570,7 @@ ICONS = {
     "question": "<path d='m21 21-4.34-4.34'/><circle cx='11' cy='11' r='8'/>",
     "play": "<path d='M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z'/>",
     "copy": "<rect width='14' height='14' x='8' y='8' rx='2' ry='2'/><path d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/>",
-    "terminal": "<path d='M12 19h8'/><path d='m4 17 6-6-6-6'/>",
     "plus": "<path d='M5 12h14'/><path d='M12 5v14'/>",
-    "folder": "<path d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/>",
     "branch": "<path d='M15 6a9 9 0 0 0-9 9V3'/><circle cx='18' cy='6' r='3'/><circle cx='6' cy='18' r='3'/>",
     "pencil": "<path d='M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z'/><path d='m15 5 4 4'/>",
     "up": "<path d='m5 12 7-7 7 7'/><path d='M12 19V5'/>",
@@ -590,10 +589,10 @@ def button_link(href, text_html, hint, ghost=False):
     return '<a class="btn%s" href="%s" title="%s">%s</a>' % (" ghost" if ghost else "", e(href, quote=True), e(hint, quote=True), text_html)
 
 
-def copy_button(command, face_html, name, labels, wide=False):
-    """A button that copies a command; one with only an icon names its action for screen readers and on hover."""
-    return ('<button type="button" class="btn ghost copy%s" data-copy="%s" data-done="%s" title="%s" aria-label="%s">%s</button>'
-            % ("" if wide else " icon-only", e(command, quote=True), e(labels["copied"], quote=True), e(command, quote=True), e(name, quote=True), face_html))
+def copy_button(command, name, labels):
+    """A button that only copies: the copy icon and its words say so, and a quieter look keeps it apart from the links that open something."""
+    return ('<button type="button" class="btn quiet copy" data-copy="%s" data-done="%s" title="%s">%s%s</button>'
+            % (e(command, quote=True), e(labels["copied"], quote=True), e(command, quote=True), icon("copy"), e(name)))
 
 
 STYLE = """
@@ -703,7 +702,9 @@ h1 { margin:0; font-size:24px; line-height:1.3; text-wrap:balance }
 .btn { display:inline-flex; gap:7px; align-items:center; font-size:13px; font-weight:500; padding:7px 13px; border-radius:8px; border:1px solid var(--accent);
   background:var(--accent); color:var(--on-accent); text-decoration:none; white-space:nowrap; cursor:pointer }
 .btn.ghost { background:transparent; color:var(--accent) }
-.btn.icon-only { padding:7px 9px }
+/* a button that only copies stays quiet, so it never reads as one of the links that open a session */
+.btn.quiet { background:none; border-color:transparent; color:var(--soft); font-weight:400; padding-inline:8px }
+.btn.quiet:hover { color:var(--ink); background:color-mix(in srgb, var(--ink) 7%, transparent); filter:none }
 .timeline { padding:16px 18px }
 .timeline h2 { margin:0 0 6px; font-size:17px } .timeline h2 span { color:var(--soft); font-weight:500; font-size:14px }
 .grid { display:grid; grid-template-columns:minmax(120px, max-content) minmax(0, 1fr); align-items:stretch }

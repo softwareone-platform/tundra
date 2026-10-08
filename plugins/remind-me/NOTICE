@@ -1,8 +1,8 @@
 remind-me includes icons from Lucide (https://lucide.dev), copied from https://github.com/lucide-icons/lucide at commit a04f228cd01185e09c188b7227b9600c08c565ec:
 
-arrow-up, calendar, chevron-right, circle-check, clock, clock-arrow-left, copy, folder, folder-git-2, git-branch, list, map-pin, moon, pencil, play, plus, search, signpost, sun, terminal
+arrow-up, calendar, chevron-right, circle-check, clock, clock-arrow-left, copy, folder-git-2, git-branch, list, map-pin, moon, pencil, play, plus, search, signpost, sun
 
-Of these, arrow-up, calendar, chevron-right, clock, moon, plus, search, terminal are among the icons Lucide derives from the Feather project, which the MIT licence below covers.
+Of these, arrow-up, calendar, chevron-right, clock, moon, plus, search are among the icons Lucide derives from the Feather project, which the MIT licence below covers.
 Lucide's licence follows in full.
 
 ---
