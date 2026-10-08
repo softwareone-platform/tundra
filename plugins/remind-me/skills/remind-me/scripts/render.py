@@ -47,6 +47,8 @@ e = html.escape
 
 def problems_in(report, digest):
     """Everything in the report that the page cannot be built from, as readable lines."""
+    if not isinstance(report, dict):
+        return ["the report must be a JSON object"]
     found = []
     for key in ("day", "language", "headline", "labels", "sessions"):
         if key not in report:
@@ -55,15 +57,26 @@ def problems_in(report, digest):
         return found
     if report["day"] != digest.get("day"):
         found.append("report day %s is not the digest's day %s" % (report["day"], digest.get("day")))
-    missing = [label for label in LABELS if not str(report["labels"].get(label, "")).strip()]
-    if missing:
-        found.append("labels missing: %s" % ", ".join(missing))
-    for label, names in PLACEHOLDERS.items():
-        lost = [name for name in names if "{%s}" % name not in str(report["labels"].get(label, ""))]
-        if label not in missing and lost:
-            found.append("label %s must keep %s" % (label, ", ".join("{%s}" % name for name in lost)))
+    # the page escapes these as text, so anything but a string stops the render with a traceback rather than this list
+    for key in ("language", "headline"):
+        if not isinstance(report[key], str) or not report[key].strip():
+            found.append("%s must be a non-blank string" % key)
+    labels = report["labels"]
+    if not isinstance(labels, dict):
+        found.append("labels must be an object")
+    else:
+        missing = [label for label in LABELS if not isinstance(labels.get(label), str) or not labels[label].strip()]
+        if missing:
+            found.append("labels missing: %s" % ", ".join(missing))
+        for label, names in PLACEHOLDERS.items():
+            lost = [name for name in names if "{%s}" % name not in str(labels.get(label, ""))]
+            if label not in missing and lost:
+                found.append("label %s must keep %s" % (label, ", ".join("{%s}" % name for name in lost)))
     # a misspelt key would otherwise drop its content without a word
     found += ["unknown top-level field: %s" % key for key in report if key not in TOP_KEYS]
+    if not isinstance(report["sessions"], dict):
+        found.append("sessions must be an object")
+        return list(dict.fromkeys(found))
     known = {session["id"] for group in digest.get("repositories", []) for session in group["sessions"]}
     for session_id, body in report["sessions"].items():
         if session_id not in known:
@@ -561,8 +574,6 @@ def badge(number):
 
 
 # Lucide icons (ISC, some derived from Feather under MIT), copied as published; the plugin's NOTICE carries both licences
-# Lucide icons (ISC, some derived from Feather under MIT), copied as published; the plugin's NOTICE carries both licences
-# Lucide icons (ISC, some derived from Feather under MIT), copied as published; the plugin's NOTICE carries both licences
 ICONS = {
     "list": "<path d='M3 5h.01'/><path d='M3 12h.01'/><path d='M3 19h.01'/><path d='M8 5h13'/><path d='M8 12h13'/><path d='M8 19h13'/>",
     "decision": "<path d='M12 13v8'/><path d='M12 3v3'/><path d='M2.354 10.354a1.207 1.207 0 0 1 0-1.708l2.06-2.06A2 2 0 0 1 5.828 6h12.344a2 2 0 0 1 1.414.586l2.06 2.06a1.207 1.207 0 0 1 0 1.708l-2.06 2.06a2 2 0 0 1-1.414.586H5.828a2 2 0 0 1-1.414-.586z'/>",
@@ -841,6 +852,8 @@ SCRIPT = """
   function point(anchor) {
     var item = anchor && document.getElementById(anchor);
     if (!item) { return; }
+    // an item past a card's first ones is folded away, and a flash on it would show nothing
+    if (item.hidden) { var all = item.closest('.col').querySelector('button.show-all'); if (all) { all.click(); } }
     item.classList.remove('flash'); void item.offsetWidth; item.classList.add('flash');
     item.scrollIntoView({ block: 'center' });
   }
