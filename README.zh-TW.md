@@ -1,4 +1,4 @@
-<!-- translated from README.md, source sha256 b614f156d5b22e6bef95d3d6c1674cbb09f70f4f589827ad20aa780d6bc40306; see CLAUDE.md "Translations of the root README" before editing -->
+<!-- translated from README.md, source sha256 52e9557d9d3b0f2035ecf4cb485e62b6f4f2714456efeda304e2ee4e70f3379c; see CLAUDE.md "Translations of the root README" before editing -->
 <div align="center">
 
 <picture>
@@ -60,7 +60,11 @@ SoftwareOne Platform 的 Claude Code plugin marketplace。
   <img alt="whoami 報告的縮圖：時間軸、結論、流程圖和表格" src="docs/whoami/thumbnails-light.png">
 </picture>
 
-| Plugin | 做什麼 |
-|---|---|
-| [`whoami`](plugins/whoami/README.md) | 從你的程式碼、你的 prompt 和你的 CLAUDE.md 做一份自我評估，輸出成 HTML 報告。只有你能用 `/whoami:whoami` 啟動它 |
-| [`remind-me`](plugins/remind-me/README.md) | 你在某一天跑過的 session 還留下哪些沒做完的事，逐一對照每個 pull request 和 branch 的即時狀態，並提供回到每個 session 的入口 |
+**[`whoami`](plugins/whoami/README.md)**：從你的程式碼、你的 prompt 和你的 CLAUDE.md 做一份自我評估，輸出成 HTML 報告。只有你能用 `/whoami:whoami` 啟動它。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/remind-me/thumbnails-dark.png">
+  <img alt="remind-me 頁面的縮圖：當天概要、時間軸、一個 repository 和一個 session" src="docs/remind-me/thumbnails-light.png">
+</picture>
+
+**[`remind-me`](plugins/remind-me/README.md)**：你在某一天跑過的 session 還留下哪些沒做完的事，逐一對照每個 pull request 和 branch 的即時狀態，並提供回到每個 session 的入口。

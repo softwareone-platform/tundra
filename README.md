@@ -59,7 +59,11 @@ Four plugins that take a ticket to a reviewed pull request. They live in [issue-
   <img alt="Thumbnails of a whoami report: its timeline, its conclusion, a flow diagram and its tables" src="docs/whoami/thumbnails-light.png">
 </picture>
 
-| Plugin | What it does |
-|---|---|
-| [`whoami`](plugins/whoami/README.md) | A self-assessment from your code, your prompts, and your CLAUDE.md, as an HTML report. Only you can start it, with `/whoami:whoami` |
-| [`remind-me`](plugins/remind-me/README.md) | What you left open in the sessions you ran on a given day, checked against the live state of each pull request and branch, with a way back into each session |
+**[`whoami`](plugins/whoami/README.md)** — A self-assessment from your code, your prompts, and your CLAUDE.md, as an HTML report. Only you can start it, with `/whoami:whoami`.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/remind-me/thumbnails-dark.png">
+  <img alt="Thumbnails of a remind-me page: the day's overview, its timeline, a repository and a session" src="docs/remind-me/thumbnails-light.png">
+</picture>
+
+**[`remind-me`](plugins/remind-me/README.md)** — What you left open in the sessions you ran on a given day, checked against the live state of each pull request and branch, with a way back into each session.
