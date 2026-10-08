@@ -545,7 +545,8 @@ def test_read_session_cuts():
           ("y" * 2000 + "?")[-cl.LAST_TAIL:])
 
 
-def test_read_session_later_prompts():
+def test_read_session_after_the_day():
+    # the day is a snapshot, so whatever the session received after it changes nothing about the day
     session = _session([
         _user("earlier", at="09:00", day=PREV),
         _user("fix the build", at="10:00"),
@@ -558,11 +559,9 @@ def test_read_session_later_prompts():
         _user("<command-name>/review</command-name><command-args>42</command-args>", at="08:03", day=TODAY,
               branch="later"),
     ])
-    check("typed prompts after the day collected in order with their day, clock and kind", session["later_prompts"],
-          [{"day": "2026-09-05", "at": "09:15", "kind": "prompt", "text": "merge it"},
-           {"day": TODAY, "at": "08:03", "kind": "command", "text": "/review 42"}])
+    check("a session carries no later_prompts", "later_prompts" in session, False)
     check("later entries leave first and last alone", (session["first"], session["last"]), ("10:00", "11:00"))
-    check("later entries leave prompts alone", session["prompts"],
+    check("typed prompts and commands after the day are not prompts", session["prompts"],
           [{"at": "10:00", "kind": "prompt", "text": "fix the build"}])
     check("later entries leave usage alone", session["usage"],
           {"claude-x": {"input_tokens": 5, "output_tokens": 1, "cache_read_input_tokens": 0,
@@ -571,18 +570,6 @@ def test_read_session_later_prompts():
     check("later entries leave branches alone", session["branches"], ["main"])
     check("a later reply is neither a question nor the last reply", (session["questions"], session["last_reply"]),
           ([], {"at": "11:00", "text": "Done."}))
-
-
-def test_read_session_later_prompts_cap():
-    records = [_user("fix the build", at="10:00")]
-    records += [_user("p%d" % n, at="08:%02d" % n, day=TODAY) for n in range(cl.LATER_PROMPTS + 5)]
-    session = _session(records)
-    check("later prompts capped at LATER_PROMPTS, the first ones kept", [p["text"] for p in session["later_prompts"]],
-          ["p%d" % n for n in range(cl.LATER_PROMPTS)])
-    # past the cap a later entry falls through to the day check, which must still turn it away
-    check("later entries past the cap leave the day alone",
-          (session["first"], session["last"], session["prompts"]),
-          ("10:00", "10:00", [{"at": "10:00", "kind": "prompt", "text": "fix the build"}]))
 
 
 def test_read_session_interrupted():
@@ -600,15 +587,6 @@ def test_read_session_interrupted():
           [{"at": "10:00", "kind": "prompt", "text": "fix the build"},
            {"at": "10:03", "kind": "prompt", "text": "fix the tests instead"},
            {"at": "10:06", "kind": "prompt", "text": "do not push yet"}])
-
-    session = _session([
-        _user("fix the build", at="10:00"),
-        _interrupt(INTERRUPTED, at="09:14", day="2026-09-05"),
-        _user("merge it", at="09:15", day="2026-09-05"),
-        _interrupt(INTERRUPTED_TOOL, at="08:00", day=TODAY),
-    ])
-    check("interruptions after the day are not later prompts", session["later_prompts"],
-          [{"day": "2026-09-05", "at": "09:15", "kind": "prompt", "text": "merge it"}])
 
 
 def test_read_session_only_later():
@@ -865,7 +843,7 @@ def test_collect_output_shape():
     check("a session on the live path carries exactly these keys",
           sorted(digest["repositories"][0]["sessions"][0]),
           sorted(["id", "cwd", "branches", "first", "last", "prompts", "questions", "pull_requests",
-                  "pull_requests_new", "last_reply", "later_prompts", "usage", "running"]))
+                  "pull_requests_new", "last_reply", "usage", "running"]))
     check("the digest on the live path carries exactly these keys", sorted(digest),
           sorted(["day", "generated", "left_out", "repositories", "pull_requests", "identities"]))
     check("the digest carries identities on the live path", digest["identities"], ["ann@example.com"])
@@ -1154,7 +1132,7 @@ _TESTS = (test_isolation, test_local_time, test_days_in, test_default_day, test_
           test_invokes_remind_me, test_is_question, test_pull_requests_azure, test_pull_requests_github,
           test_add_usage, test_subagent_usage,
           test_result_text, test_read_session, test_read_session_nothing_that_day, test_read_session_cuts,
-          test_read_session_later_prompts, test_read_session_later_prompts_cap, test_read_session_interrupted,
+          test_read_session_after_the_day, test_read_session_interrupted,
           test_read_session_only_later,
           test_read_session_cwd,
           test_collect_left_out_and_dropped, test_collect_groups_by_repository, test_collect_running_sessions,
