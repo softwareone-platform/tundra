@@ -692,7 +692,8 @@ h1 { margin:0; font-size:24px; line-height:1.3; text-wrap:balance }
 .head h2 { margin:0; font-size:22px; font-variant-numeric:tabular-nums } .head h2 .span { font-weight:500; color:var(--soft); font-size:16px }
 .head .top { display:flex; gap:14px; align-items:center; flex-wrap:wrap }
 .head .top > .tile { width:52px; height:52px; font-size:26px; border-radius:12px }
-.head .grow { flex:1; min-width:0 }
+/* the name and path keep a column of their own, so the buttons move below them rather than squeezing a long name into pieces */
+.head .grow { flex:1 1 360px; min-width:0 }
 .path { font-family:var(--mono); font-size:12.5px; color:var(--faint); overflow-wrap:anywhere }
 .figures { display:flex; flex-wrap:wrap; gap:4px 22px; margin:0; color:var(--soft); font-size:13px; font-variant-numeric:tabular-nums }
 .figures b { color:var(--ink); font-weight:600 }
