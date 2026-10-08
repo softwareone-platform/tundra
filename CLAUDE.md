@@ -21,7 +21,8 @@ scripts/sync-plugin-sources.py      pins every remote source to its ref's tip
 scripts/check-readme-translations.py  fails when a README translation is behind README.md
 .githooks/pre-push                  runs that check on every pushed commit
 README.md                           the English README, translated by README.zh-TW.md and README.zh-CN.md
-docs/whoami/                        the translations' whoami screenshots
+docs/whoami/                        the root READMEs' whoami thumbnails, a light and a dark version shared by all three READMEs
+docs/issue-to-pr/                   the root READMEs' resolve-issue-dashboard thumbnails, cut from issue-to-pr's own screenshot
 docs/banner/                        the root README's banner, a light and a dark version shared by all three READMEs
 LICENSE                             covers everything under the root
 ```
@@ -78,6 +79,6 @@ Working notes live in `.claude/plans/`, which holds a `.gitignore` of its own th
 
 **Translations of the root README.** `README.md` is translated into `README.zh-TW.md` and `README.zh-CN.md`, and any edit to it makes both stale. Each translation's first line records the sha256 of the README it was made from, and `scripts/check-readme-translations.py` fails when that digest is not the current README's. The pre-push hook runs it against each commit being pushed, so enable the hook once per clone with `git config core.hooksPath .githooks`. This repository has no CI, so a clone without the hook checks nothing. After an edit, re-translate only the paragraphs that changed and record the digest the check prints. The digest proves only that someone touched the translation after the English changed, not that the translation now means the same. The vocabulary follows issue-to-pr's `docs/translation-glossary.md`, so a term reads the same in both repositories. Code blocks, link targets and the language switcher stay as in the English, with two exceptions: a link into issue-to-pr's README goes to its translation in the same language, and a translated heading that a link points at carries the English `<a id>`, because a translated heading gets a different GitHub anchor. Plugin READMEs are not translated.
 
-The whoami screenshots in the translations live in `docs/whoami/` rather than the plugin folder, because the root README is their only reader and every install copies the plugin folder. They are rendered by the plugin's own renderer from a fictional report written in each language, which is what a real run asked for that language produces.
+The whoami thumbnails live in `docs/whoami/` rather than the plugin folder, and the dashboard's in `docs/issue-to-pr/`, since this README presents several plugin suites where issue-to-pr's own presents one, because the root READMEs are their only readers and every install copies the plugin folder. They are a strip of sections from the plugin's own screenshots of a fictional report, small enough that the words are not meant to be read, so one light and one dark version serve all three languages. A section's picture comes before its text and its table, and a table names what a plugin does without listing its skills, which the plugin's own README lists.
 
 Commit messages carry no prefix and no attribution trailer.
