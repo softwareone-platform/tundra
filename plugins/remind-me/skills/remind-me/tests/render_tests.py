@@ -698,6 +698,20 @@ def test_main_refuses_invalid_report():
     check("no file written", os.path.exists(out_path), False)
 
 
+def test_main_refuses_wrong_types():
+    code, out, out_path = _main([], _digest())
+    check("a report that is a list exits 2", code, render.EXIT_SCHEMA)
+    check("a report that is a list is named", out.splitlines(), [SCHEMA_HEADER, "- the report must be a JSON object"])
+    check("a report that is a list writes nothing", os.path.exists(out_path), False)
+    report = _report(labels=None)
+    report["sessions"] = []
+    code, out, out_path = _main(report, _digest())
+    check("labels and sessions not objects exits 2", code, render.EXIT_SCHEMA)
+    check("labels and sessions not objects are both named", out.splitlines(),
+          [SCHEMA_HEADER, "- labels must be an object", "- sessions must be an object"])
+    check("labels and sessions not objects writes nothing", os.path.exists(out_path), False)
+
+
 def test_main_writes_page():
     opened = []
     saved = render.webbrowser.open
@@ -834,6 +848,50 @@ def test_bad_marks_never_a_problem():
               '<span class="tile" aria-hidden="true">R</span>' in _head(_panel(page, "p-r-repo-a")), True)
         # repo-a is the only repository, so any emoji tile on the page would be repo-a's
         check("marks as %s draws no emoji tile" % name, 'class="tile emoji"' in page, False)
+
+
+# ----- problems_in: values of the wrong type ------------------------------------
+
+def test_report_not_an_object():
+    for name, report in (("a list", []), ("a string", "day"), ("null", None), ("a number", 5)):
+        check("a report that is %s" % name, render.problems_in(report, _digest()), ["the report must be a JSON object"])
+
+
+def test_labels_not_an_object():
+    # with no object to read, neither a missing label nor a lost placeholder is reported on top
+    for name, labels in (("a list", []), ("a string", "x"), ("null", None)):
+        check("labels as %s" % name, render.problems_in(_report(labels=labels), _digest()), ["labels must be an object"])
+
+
+def test_sessions_not_an_object():
+    for name, sessions in (("a list", []), ("a string", "x"), ("null", None)):
+        report = _report()
+        # _report reads a None sessions as the default ones, so the value is set after building
+        report["sessions"] = sessions
+        check("sessions as %s" % name, render.problems_in(report, _digest()), ["sessions must be an object"])
+    report = _report(labels=None, headline=5, extra="x")
+    report["sessions"] = []
+    check("problems before a sessions that is not an object are still reported, in order",
+          render.problems_in(report, _digest()),
+          ["headline must be a non-blank string", "labels must be an object", "unknown top-level field: extra",
+           "sessions must be an object"])
+
+
+def test_language_and_headline_must_be_text():
+    for key in ("language", "headline"):
+        for name, value in (("a number", 5), ("null", None), ("a list", ["x"]), ("blank", "  ")):
+            check("%s as %s" % (key, name), render.problems_in(_report(**{key: value}), _digest()),
+                  ["%s must be a non-blank string" % key])
+
+
+def test_label_not_a_string():
+    for label in ("here", "duration"):
+        for name, value in (("a number", 5), ("a list", ["x"]), ("null", None)):
+            labels = _labels()
+            labels[label] = value
+            # a label already missing is not also told to keep its placeholders
+            check("label %s as %s" % (label, name), render.problems_in(_report(labels=labels), _digest()),
+                  ["labels missing: %s" % label])
 
 
 # ----- the repository mark -------------------------------------------------------
@@ -1143,6 +1201,23 @@ def test_levels_fold_past_limit():
     check("the overview's folded done card folds too", folded["twin action"].count('<li class="more" hidden data-go='), 1)
 
 
+def test_folded_links_land_on_folded_items():
+    # a link to an item past a card's first ones lands on an item folded on its session panel too,
+    # and that card's own button is what opens it, so the markup must pair each folded target with one button
+    page = render.page(_report({"s1": _body(open_items=_many("action", 12))}), _digest())
+    session = _panel(page, "p-s-s1")
+    folded_ids = re.findall(r'<li class="more" hidden id="([^"]+)">', session)
+    check("the session panel folds the last two actions", folded_ids, ["i-s1-o10", "i-s1-o11"])
+    for panel_id in ("p-", "p-r-repo-a"):
+        links = re.findall(r'<li class="more" [^>]*data-item="([^"]+)"', _panel(page, panel_id))
+        check("on %s each folded link targets a folded item on the session panel" % panel_id, links, folded_ids)
+    for anchor in folded_ids:
+        holders = [content for _, content in _cards(session) if '<li class="more" hidden id="%s">' % anchor in content]
+        check("%s sits in one card" % anchor, len(holders), 1)
+        check("%s shares its card with one show-all button" % anchor,
+              [holder.count('class="btn ghost show-all"') for holder in holders], [1])
+
+
 # ----- panel keys ----------------------------------------------------------------
 
 def test_slugs():
@@ -1242,14 +1317,17 @@ _TESTS = (test_valid_report_has_no_problems, test_missing_top_level_fields, test
           test_session_meta,
           test_token_mix, test_token_mix_label_escaped, test_token_mix_zero_usage,
           test_summary, test_summary_repositories_in_order,
-          test_main_refuses_invalid_report, test_main_writes_page, test_script_on_cp1252_console,
+          test_main_refuses_invalid_report, test_main_refuses_wrong_types, test_main_writes_page, test_script_on_cp1252_console,
           test_placeholder_labels, test_unknown_fields, test_happened_lists_must_be_lines, test_topics_with_a_bad_line,
           test_detail_must_be_a_string, test_session_body_not_an_object, test_open_not_a_list_of_objects,
           test_shared_problem_reported_once, test_bad_marks_never_a_problem,
+          test_report_not_an_object, test_labels_not_an_object, test_sessions_not_an_object,
+          test_language_and_headline_must_be_text, test_label_not_a_string,
           test_emoji_like_accepts, test_emoji_like_rejects, test_same_path, test_marks_match_paths_loosely,
           test_marks_duplicates, test_marks_unusable, test_tile_is_the_same_everywhere, test_main_with_bad_marks,
           test_code_chips, test_item_body, test_happened_cards, test_folded_overview_lane,
           test_item_anchors_and_links, test_lanes_below_the_overview, test_levels_fold_past_limit,
+          test_folded_links_land_on_folded_items,
           test_slugs, test_panel_keys, test_running_count_chip, test_summary_excludes_what_happened,
           test_fill_and_length, test_session_position, test_badge)
 
