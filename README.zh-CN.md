@@ -60,11 +60,11 @@ SoftwareOne Platform 的 Claude Code plugin marketplace。
   <img alt="whoami 报告的缩略图：时间线、结论、流程图和表格" src="docs/whoami/thumbnails-light.png">
 </picture>
 
-**[`whoami`](plugins/whoami/README.md)**：根据你的代码、你的 prompt 和你的 CLAUDE.md 做一份自我评估，输出为 HTML 报告。只有你能用 `/whoami:whoami` 启动它。
+**[`whoami`](plugins/whoami/README.zh-CN.md)**：根据你的代码、你的 prompt 和你的 CLAUDE.md 做一份自我评估，输出为 HTML 报告。只有你能用 `/whoami:whoami` 启动它。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/remind-me/thumbnails-dark.png">
   <img alt="remind-me 页面的缩略图：当天概要、时间线、一个 repository 和一个 session" src="docs/remind-me/thumbnails-light.png">
 </picture>
 
-**[`remind-me`](plugins/remind-me/README.md)**：你在某一天运行过的 session 还留下哪些没做完的事，逐一对照每个 pull request 和 branch 的实时状态，并提供回到每个 session 的入口。
+**[`remind-me`](plugins/remind-me/README.zh-CN.md)**：你在某一天运行过的 session 还留下哪些没做完的事，逐一对照每个 pull request 和 branch 的实时状态，并提供回到每个 session 的入口。
