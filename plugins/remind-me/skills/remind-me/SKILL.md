@@ -48,7 +48,7 @@ Read [`report-schema.md`](report-schema.md) first: what you judge here is what f
 - **Open.** What it left that the person has to do or decide:
   - A question is open when no later prompt in the same session answers it, `later_prompts` included: the report says what is open now, so one answered after the day moves to done, and its line says it was answered later. A prompt that moves on to something else does not answer it.
   - The last reply's offers and recommendations are open unless a later prompt took them up.
-  - Mark each item `decision` (the person has to choose), `action` (something to do), or `question` (something to find out), and set `since` to the `at` time of the prompt, question or reply it comes from.
+  - Mark each item `decision` (the person has to choose), `action` (something to do), or `question` (something to find out).
   - A session that ran this skill, or reconstructed another day by hand, carries that other day's items in its replies. Judge it on its own work; the day it was reporting on is not this day's open work.
 
 Then reconcile every item with the live state, which is what is true now:
@@ -63,7 +63,7 @@ The page shows each repository's uncommitted and unpushed counts and marks runni
 
 ## 5. Write the report
 
-Write one JSON document, following [`report-schema.md`](report-schema.md), in the report's language. Read the schema before you write it. It holds only the judgement: the headline, the labels, and each session's topics, done and open items. The renderer takes every figure, state and command, and every time except `since`, from the digest, so none of them goes in the report. The headline says in words what matters most about the day, such as what is still waiting on the person, and carries no counts: the figures sit right under it and come from the digest.
+Write one JSON document, following [`report-schema.md`](report-schema.md), in the report's language. Read the schema before you write it. It holds only the judgement: the headline, the labels, and each session's topics, done and open items. The renderer takes every figure, state, command and time from the digest, so none of them goes in the report. The headline says in words what matters most about the day, such as what is still waiting on the person, and carries no counts: the figures sit right under it and come from the digest.
 
 Write it to `${CLAUDE_PLUGIN_DATA}/reports/<day>-${CLAUDE_SESSION_ID}.json`, replacing an earlier report from this session. Then render it:
 
