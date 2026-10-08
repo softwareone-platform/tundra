@@ -607,15 +607,15 @@ def copy_button(command, name, labels):
 
 
 STYLE = """
-:root { --ink:#1c2330; --soft:#4f5868; --faint:#4f5868; --line:rgba(28,35,48,.10); --accent:#24599a; --on-accent:#ffffff;
-  --card:rgba(255,255,255,.55); --card-line:rgba(255,255,255,.80); --sheen:rgba(255,255,255,.35); --solid:#ffffff;
-  --bar:rgba(60,74,99,.22); --openbar:#3b4a63; --on-openbar:#ffffff; --code-bg:rgba(36,89,154,.09);
-  --decision:#7a3fb0; --decision-bg:#f0e7fa; --action:#0f6e66; --action-bg:#e0f2ef; --question:#9a5806; --question-bg:#fcefdc;
+:root { --ink:#2b2620; --soft:#5e5549; --faint:#5e5549; --line:rgba(70,45,20,.11); --accent:#24599a; --on-accent:#ffffff;
+  --card:rgba(255,252,245,.45); --card-line:rgba(255,255,255,.95); --sheen:rgba(255,255,255,.70); --solid:#ffffff;
+  --bar:rgba(110,85,55,.22); --openbar:#4a3f33; --on-openbar:#ffffff; --code-bg:rgba(140,95,40,.10);
+  --decision:#7a3fb0; --decision-bg:#f0e7fa; --action:#0f6e66; --action-bg:#e0f2ef; --question:#8a4c04; --question-bg:#f7e0bd;
   --done:#1f7a4d; --warn:#a3324f; --warn-bg:#fbe6ea; --live:#1f7a4d;
   --mix-read:#a9c0dc; --mix-write:#5b8fd0; --mix-fresh:#24599a; --mix-out:#d08a2f;
-  --lv-day:hsl(220 12% 38%); --lv-repo:hsl(84 75% 28%); --lv-session:hsl(315 60% 42%);
-  --bg:linear-gradient(135deg, hsl(200 75% 88%) 0%, hsl(214 55% 95%) 50%, hsl(228 70% 90%) 100%); --bg-base:hsl(212 45% 95%);
-  --shadow:0 1px 2px rgba(20,40,80,.06), 0 10px 30px rgba(20,40,80,.08);
+  --lv-day:hsl(28 25% 32%); --lv-repo:hsl(84 75% 28%); --lv-session:hsl(315 60% 42%);
+  --bg:linear-gradient(135deg, hsl(42 75% 88%) 0%, hsl(36 60% 95%) 50%, hsl(22 65% 88%) 100%); --bg-base:hsl(38 55% 93%);
+  --shadow:inset 0 1px 0 rgba(255,255,255,.95), 0 1px 2px rgba(80,50,20,.08), 0 14px 34px rgba(80,50,20,.15);
   --sans:-apple-system,"Segoe UI","PingFang TC","Microsoft JhengHei",system-ui,sans-serif; --mono:ui-monospace,"Cascadia Code",Consolas,monospace;
   --emoji:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif; color-scheme:light }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ink:#e6e9ef; --soft:#b3bccb; --faint:#a9b2c1; --line:rgba(255,255,255,.08);
