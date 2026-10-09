@@ -1,4 +1,4 @@
-<!-- translated from README.md, source sha256 9cb3de0eb9895cf1ffe81b685d90f9351e929de7fafa4141e98c912d1989b5e8; see the root CLAUDE.md "Translations of a plugin's README" before editing -->
+<!-- translated from README.md, source sha256 58ac313bf01f545376730599f14f2519a23efb059ed287c58338a771ad9c6349; see the root CLAUDE.md "Translations of a plugin's README" before editing -->
 # remind-me
 
 [English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
@@ -51,7 +51,7 @@ flowchart TB
         render -. 接著刪除 .-> digest
     end
     subgraph provider["LLM"]
-        model["Anthropic 或你的雲端供應商<br>讀摘錄，判斷主題、決定、完成、查明和待處理的事"]
+        model["讀摘錄<br>判斷主題、決定、完成、查明和待處理的事"]
     end
     subgraph host["Azure DevOps 或 GitHub"]
         remote["每個提到的 pull request 的狀態<br>透過你自己的 az 或 gh 登入"]

@@ -50,7 +50,7 @@ flowchart TB
         render -. then deletes .-> digest
     end
     subgraph provider["LLM"]
-        model["Anthropic or your cloud provider<br>reads the excerpts, judges topics, what was decided, done and found, what is open"]
+        model["Reads the excerpts<br>judges topics, what was decided, done and found, what is open"]
     end
     subgraph host["Azure DevOps or GitHub"]
         remote["The state of each pull request named<br>through your own az or gh login"]
