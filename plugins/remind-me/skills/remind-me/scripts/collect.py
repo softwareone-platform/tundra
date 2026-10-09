@@ -264,11 +264,9 @@ def read_session(path, days):
                 # the folder the session started in is where Claude Code keeps it and where a resume belongs,
                 # while a later cwd only follows the shell wherever a command moved it
                 session["cwd"] = entry.get("cwd")
-            when = local_time(entry.get("timestamp", ""))
-            if not when or when[0] not in days:
-                continue
             kind = entry.get("type")
             prompt = typed_prompt(entry) if kind == "user" else None
+            # a run is followed on every day, so one started the evening before the range is still recognised inside it
             if prompt and invokes_remind_me(prompt[1]):
                 in_run = True
                 continue
@@ -278,6 +276,9 @@ def read_session(path, days):
                 if not (prompt and prompt[0] in ("prompt", "command")):
                     continue
                 in_run = False
+            when = local_time(entry.get("timestamp", ""))
+            if not when or when[0] not in days:
+                continue
             clock = "%s %s" % when
             session["first"] = session["first"] or clock
             session["last"] = clock

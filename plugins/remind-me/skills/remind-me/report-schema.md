@@ -50,6 +50,7 @@ Every label is required, in the report's language. A label that holds a number o
 | `token_mix` | token mix |
 | `all_open` | everything left open |
 | `level_day` | DAY |
+| `level_range` | RANGE |
 | `level_repository` | REPOSITORY |
 | `level_session` | SESSION |
 | `session_position` | {n} of {total} |

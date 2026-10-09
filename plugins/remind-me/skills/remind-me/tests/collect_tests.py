@@ -762,6 +762,77 @@ def test_read_session_remind_me_run_days():
     check("the run leaves no last reply and no usage", (session["last_reply"], session["usage"]), (None, {}))
 
 
+def test_read_session_remind_me_run_from_the_day_before():
+    for form, invocation in (("typed", "/remind-me"), ("command", "<command-name>/remind-me</command-name>")):
+        session = _session([
+            # the run starts the evening before the range, so only its spill-over falls inside it
+            _user(invocation, at="23:50", day=PREV),
+            _assistant("Want me to open !4101?", at="00:05", msg_id="m1", usage=_usage(100, 50), branch="run"),
+            _assistant([_tool_use("Bash", "az repos pr show --id 4102")], at="00:06", msg_id="m2", usage=_usage(7),
+                       branch="run"),
+            _user([_tool_result("Created !4103")], at="00:07", branch="run"),
+            _user("fix the build", at="09:00"),
+            _assistant("Done.", at="09:05", msg_id="m3", usage=_usage(5, 1)),
+        ], day={DAY})
+        check("%s: only the prompt that ends the run is a prompt" % form, session["prompts"],
+              [{"at": DAY + " 09:00", "kind": "prompt", "text": "fix the build"}])
+        check("%s: the run's question on the day is left out" % form, session["questions"], [])
+        check("%s: the last reply is the one after the run" % form, session["last_reply"],
+              {"at": DAY + " 09:05", "text": "Done."})
+        check("%s: the run's usage on the day is left out" % form, session["usage"],
+              {"claude-x": {"input_tokens": 5, "output_tokens": 1, "cache_read_input_tokens": 0,
+                            "cache_creation_input_tokens": 0}})
+        check("%s: pull requests the run named on the day are left out" % form, session["pull_requests"], [])
+        check("%s: the run's branch is left out" % form, session["branches"], ["main"])
+        check("%s: the session starts at the prompt that ends the run" % form, (session["first"], session["days"]),
+              (DAY + " 09:00", [DAY]))
+
+
+def test_read_session_remind_me_run_from_the_day_before_summary():
+    session = _session([
+        _user("/remind-me", at="23:50", day=PREV),
+        _assistant("Want me to open !4101?", at="00:05", msg_id="m1", usage=_usage(100, 50), branch="run"),
+        _user(cl.COMPACTION_PREFIX + ". Pending: push the branch.", at="00:20", branch="run"),
+        _assistant("After the summary, shall I go on?", at="00:25", msg_id="m2", usage=_usage(9), branch="run"),
+        # no reply follows the prompt, so a reply kept from inside the run would show as the last one
+        _user("fix the build", at="09:00"),
+    ], day={DAY})
+    check("a summary inside a run from the day before is not a prompt", session["prompts"],
+          [{"at": DAY + " 09:00", "kind": "prompt", "text": "fix the build"}])
+    check("the reply after the summary is not a question", session["questions"], [])
+    check("the reply after the summary is not the last reply", session["last_reply"], None)
+    check("the reply after the summary is not counted", session["usage"], {})
+
+
+def test_read_session_remind_me_run_only_from_the_day_before():
+    spill_over = [
+        _user("/remind-me", at="23:50", day=PREV),
+        _assistant("The report. Want me to go on?", at="00:10", msg_id="m1", usage=_usage(50)),
+        _user([_tool_result("Created !5101")], at="00:11"),
+    ]
+    check("a session holding only a run's spill-over in the range is nothing", _session(spill_over, day={DAY}), None)
+    digest = _collect_span({"proj/r1.jsonl": spill_over, "proj/k1.jsonl": [_user("kept")]}, DAY, DAY,
+                           live=False, today=TODAY)
+    check("collect drops it, and its day before still sets the earliest", (_summary(digest), digest["earliest"]),
+          ([(FOLDER, False, False, ["k1"])], PREV))
+
+
+def test_read_session_remind_me_run_ended_before_the_range():
+    session = _session([
+        _user("/remind-me", at="23:50", day=BEFORE),
+        # the command ends the run although it falls outside the range itself
+        _user("<command-name>/review</command-name><command-args>42</command-args>", at="23:55", day=BEFORE),
+        _assistant("Reviewed.", at="00:05", msg_id="m1", usage=_usage(2, 1)),
+    ], day={DAY})
+    check("a reply after a run that ended before the range is the last reply", session["last_reply"],
+          {"at": DAY + " 00:05", "text": "Reviewed."})
+    check("and is counted", session["usage"],
+          {"claude-x": {"input_tokens": 2, "output_tokens": 1, "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0}})
+    check("the command that ended the run is outside the range", (session["prompts"], session["first"]),
+          ([], DAY + " 00:05"))
+
+
 # ----- collect: which sessions, grouped how --------------------------------------
 
 def test_collect_left_out_and_dropped():
@@ -1431,7 +1502,10 @@ _TESTS = (test_isolation, test_local_time, test_days_in, test_default_day, test_
           test_main_no_sessions, test_main_date_format, test_non_ascii_on_cp1252_console,
           test_span_days, test_read_session_days, test_read_session_across_days, test_subagent_usage_days,
           test_read_session_remind_me_run, test_read_session_remind_me_run_ended_by_prompt,
-          test_read_session_remind_me_run_days,
+          test_read_session_remind_me_run_days, test_read_session_remind_me_run_from_the_day_before,
+          test_read_session_remind_me_run_from_the_day_before_summary,
+          test_read_session_remind_me_run_only_from_the_day_before,
+          test_read_session_remind_me_run_ended_before_the_range,
           test_collect_range, test_collect_earliest, test_collect_remind_me_run_dropped,
           test_collect_live_pull_requests_new_range,
           test_main_range_validation, test_main_default_day_today, test_main_progress_line,

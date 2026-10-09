@@ -1610,8 +1610,42 @@ def test_range_headings():
     page = render.page(_range_report(), _range_digest())
     check("the sidebar names the range", ('<div class="day">%s</div>' % _SPAN) in page, True)
     eyebrow = re.search(r'<span class="eyebrow">%s(.*?)</span>' % _ICON, _panel(page, "p-")).group(1)
-    check("the overview eyebrow names the range", eyebrow, "[level_day] \u00b7 " + _SPAN)
+    check("the overview eyebrow names the range", eyebrow, "[level_range] \u00b7 " + _SPAN)
     check("the page title names the range", ("<title>remind-me %s</title>" % _SPAN) in page, True)
+
+
+def test_one_day_heading():
+    page = render.page(_report(), _digest())
+    eyebrow = re.search(r'<span class="eyebrow">%s(.*?)</span>' % _ICON, _panel(page, "p-")).group(1)
+    check("the overview eyebrow of one day names the day", eyebrow, "[level_day] \u00b7 2026-10-05")
+
+
+def test_level_range_required():
+    report = _report()
+    del report["labels"]["level_range"]
+    # a one-day report never shows level_range, yet the schema still requires it
+    check("a one-day report without level_range names it", render.problems_in(report, _digest()),
+          ["labels missing: level_range"])
+
+
+_SCHEMA = os.path.join(_HERE, "..", "report-schema.md")
+
+
+def _schema_label_keys(text):
+    """The keys of the label table, one per row, in the order the schema lists them."""
+    section = text[text.index("\n## Labels\n"):]
+    end = section.find("\n## ", 1)
+    if end >= 0:
+        section = section[:end]
+    return re.findall(r"^\| `(\w+)` \|", section, re.MULTILINE)
+
+
+def test_schema_lists_every_label():
+    # the model learns the labels only from this table, and the renderer refuses a report missing any of them
+    with open(_SCHEMA, encoding="utf-8") as f:
+        keys = _schema_label_keys(f.read())
+    check("the schema's label table holds exactly the renderer's labels", sorted(keys), sorted(render.LABELS))
+    check("no label is listed twice", sorted(key for key in set(keys) if keys.count(key) > 1), [])
 
 
 def test_summary_on_a_range():
@@ -1678,6 +1712,7 @@ _TESTS = (test_valid_report_has_no_problems, test_missing_top_level_fields, test
           test_range_report_fields, test_single_and_span_text, test_clock_and_minutes, test_shown_and_stamp_html,
           test_length_across_days, test_day_axis, test_day_axis_reads_days, test_position, test_rows_for_on_a_range,
           test_range_timeline_markup, test_one_day_timeline_markup, test_range_text_and_attributes, test_range_headings,
+          test_one_day_heading, test_level_range_required, test_schema_lists_every_label,
           test_summary_on_a_range, test_view_does_not_leak)
 
 

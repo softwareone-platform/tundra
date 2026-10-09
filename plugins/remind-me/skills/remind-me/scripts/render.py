@@ -29,7 +29,7 @@ LABELS = ("sessions", "repositories", "prompts", "pull_requests", "tokens", "tok
           "done", "running", "all_open", "resume", "copy_resume", "new_session", "copy_terminal", "copied", "theme", "theme_light", "theme_dark",
           "uncommitted", "unpushed", "nothing_open", "nothing_happened", "as_of", "language_hint", "resume_last", "here", "state_unread", "copy_path",
           "show_all", "repository_list", "decided", "found", "cache_read", "cache_write", "uncached_input", "decision", "action", "question",
-          "level_day", "level_repository", "level_session", "session_position", "still_open", "what_happened",
+          "level_day", "level_range", "level_repository", "level_session", "session_position", "still_open", "what_happened",
           "duration", "duration_minutes", "timeline", "session_count", "running_count", "cannot_resume", "token_mix")
 # the labels that carry numbers or names, and the placeholders each must keep so the renderer can fill them in
 PLACEHOLDERS = {"session_position": ("n", "total"), "duration": ("hours", "minutes"), "duration_minutes": ("minutes",),
@@ -549,7 +549,7 @@ def overview_panel(digest, report, labels, groups, span):
     mix_names = (("read", labels["cache_read"]), ("write", labels["cache_write"]), ("fresh", labels["uncached_input"]), ("out", labels["output"]))
     head = ('<section class="card head scope">%s<h1>%s</h1><p class="figures">%s</p>'
             '<div class="mix"><div class="mixbar" role="img" aria-label="%s">%s</div><div class="legend">%s</div></div></section>'
-            % (eyebrow("calendar", "%s · %s" % (labels["level_day"], span_text(digest))), e(report["headline"]),
+            % (eyebrow("calendar", "%s · %s" % (labels["level_day" if single(digest) else "level_range"], span_text(digest))), e(report["headline"]),
                "".join("<span><b>%s</b> %s</span>" % (e(str(value)), e(label)) for value, label in stats), e(labels["token_mix"], quote=True),
                "".join('<span style="width:%.3f%%;background:var(--mix-%s)"></span>' % (100.0 * parts[key] / whole, key) for key, _ in mix_names),
                "".join('<span><i style="background:var(--mix-%s)"></i>%s %s (%.1f%%)</span>' % (key, e(name), compact(parts[key]), 100.0 * parts[key] / whole)
