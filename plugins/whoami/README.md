@@ -43,16 +43,14 @@ It assesses the person running it. The material it reads and the context it asks
 
 ```mermaid
 flowchart TB
-    subgraph machine["This machine"]
-        identity["identity.py<br>links what you confirm to your git config"] -- only your addresses --> code["Your repositories, through git only<br>your commits, their diffs, the code around them"]
-        transcripts["Transcripts<br>~/.claude/projects"] --> prompts["extract_prompts.py<br>only the text you typed, in the repositories you chose"]
-        rules["Instruction files<br>CLAUDE.md and .claude/rules/, the lines you wrote"]
-        render["render_report.py<br>checks the identities again, then writes"] --> report["The report in the plugin's data folder<br>and a summary in the session"]
-    end
-    code --> model["The model behind your session<br>and fresh subagents reading the code in parallel"]
+    identity["identity.py<br>links what you confirm to your git config"] -- only your addresses --> code["Your repositories, through git only<br>your commits, their diffs, the code around them"]
+    transcripts["Transcripts<br>~/.claude/projects"] --> prompts["extract_prompts.py<br>only the text you typed, in the repositories you chose"]
+    rules["Instruction files<br>CLAUDE.md and .claude/rules/, the lines you wrote"]
+    code --> model["LLM<br>your session, and fresh subagents reading the code in parallel"]
     prompts --> model
     rules --> model
-    model -- report document --> render
+    model -- report document --> render["render_report.py<br>checks the identities again, then writes"]
+    render --> report["The report in the plugin's data folder<br>and a summary in the session"]
 ```
 
 **Code** is read through git only: the history, the diffs of your commits, and the code around them at each commit. It never reads code from your working tree, so untracked and ignored files such as local settings and secrets stay out of the analysis. The only files it reads from the working tree are the instruction files named below.
