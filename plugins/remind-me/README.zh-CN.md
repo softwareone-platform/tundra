@@ -1,4 +1,4 @@
-<!-- translated from README.md, source sha256 58ac313bf01f545376730599f14f2519a23efb059ed287c58338a771ad9c6349; see the root CLAUDE.md "Translations of a plugin's README" before editing -->
+<!-- translated from README.md, source sha256 dd05af1a133f116cf034dbad7d7f66d5fd60972e60bc7af8d207405b815f2a08; see the root CLAUDE.md "Translations of a plugin's README" before editing -->
 # remind-me
 
 [English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
@@ -40,30 +40,20 @@
 
 ```mermaid
 flowchart TB
-    subgraph machine["这台机器"]
-        transcripts["Transcript<br>~/.claude/projects"] --> collect
-        git["每个 repository 里的 git<br>branch、未 commit 和未 push 的工作"] --> collect
-        collect["collect.py<br>保留当天的 prompt，排除 claude -p 运行记录"] --> digest["Digest<br>当天 transcript 的摘录"]
-        digest --> session["你的 Claude Code session"]
-        digest -- 所有数字、时间和状态 --> render["render.py<br>生成摘要和页面"]
-        session -- 报告 --> render
-        render --> page["session 里的摘要<br>以及 plugin 文件夹里的 HTML 页面"]
-        render -. 随后删除 .-> digest
-    end
-    subgraph provider["LLM"]
-        model["读取摘录<br>判断主题、决定、完成、查明和待处理的事"]
-    end
-    subgraph host["Azure DevOps 或 GitHub"]
-        remote["每个提到的 pull request 的状态<br>通过你自己的 az 或 gh 登录"]
-    end
-    session -- 摘录 --> model
-    model -- 报告 --> session
-    remote --> collect
+    transcripts["Transcript<br>~/.claude/projects"] --> collect
+    git["每个 repository 里的 git<br>branch、未 commit 和未 push 的工作"] --> collect
+    remote["Azure DevOps 或 GitHub<br>每个提到的 pull request 的状态"] --> collect
+    collect["collect.py<br>保留当天的 prompt，排除 claude -p 运行记录"] --> digest["Digest<br>当天 transcript 的摘录"]
+    digest -- 摘录 --> model["LLM<br>判断主题、决定、完成、查明和待处理的事"]
+    model -- 报告 --> render["render.py<br>生成摘要和页面"]
+    digest -- 所有数字、时间和状态 --> render
+    render --> page["session 里的摘要<br>以及 plugin 文件夹里的 HTML 页面"]
+    render -. 随后删除 .-> digest
 ```
 
 它读取 Claude Code 保存在这台机器 `~/.claude/projects` 下的 transcript，覆盖你当天工作过的每个 repository。它会在这些 repository 里运行 `git`，并用 `az` 或 `gh` 查询 session 提到的 pull request。没有 `az` 或 `gh`，或者没有登录时，pull request 的状态会标记为未查询，绝不会当成待审。
 
-你的 session 里的模型会读取 digest，所以当天 transcript 的摘录会发送到模型那一端，就像你让 Claude 读取一个文件一样。查询会通过你自己的 CLI 登录，向 Azure DevOps 或 GitHub 询问每个提到的 pull request 的状态，以及你登录的账号，以此区分哪些新的 pull request 是你创建的、哪些是同事创建的。除此之外没有任何内容离开这台机器，页面也不会从网络加载任何内容。
+你的 session 所用的模型会读取 digest，所以当天 transcript 的摘录会发送到那个模型运行的地方，就像你让 Claude 读取一个文件一样。查询会通过你自己的 CLI 登录，向 Azure DevOps 或 GitHub 询问每个提到的 pull request 的状态，以及你登录的账号，以此区分哪些新的 pull request 是你创建的、哪些是同事创建的。除此之外没有任何内容离开这台机器，页面也不会从网络加载任何内容。
 
 报告和页面写在 plugin 自己的文件夹 `~/.claude/plugins/data/remind-me-tundra/reports/`，digest 在报告生成后就会删除。报告记录的是工作本身，而不是工作接触过的数据，所以凭据、人名、客户和账号的标识符，以及从 production 系统读取到的任何内容都不会写进去。
 

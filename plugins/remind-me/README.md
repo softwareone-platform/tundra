@@ -39,30 +39,20 @@ The page is the day as it was, judged from that day's prompts alone, while pull 
 
 ```mermaid
 flowchart TB
-    subgraph machine["This machine"]
-        transcripts["Transcripts<br>~/.claude/projects"] --> collect
-        git["git in each repository<br>branches, uncommitted and unpushed work"] --> collect
-        collect["collect.py<br>keeps the day's prompts, leaves out claude -p runs"] --> digest["Digest<br>excerpts of the day's transcripts"]
-        digest --> session["Your Claude Code session"]
-        digest -- every figure, time and state --> render["render.py<br>builds the summary and the page"]
-        session -- report --> render
-        render --> page["Summary in the session<br>and an HTML page in the plugin's data folder"]
-        render -. then deletes .-> digest
-    end
-    subgraph provider["LLM"]
-        model["Reads the excerpts<br>judges topics, what was decided, done and found, what is open"]
-    end
-    subgraph host["Azure DevOps or GitHub"]
-        remote["The state of each pull request named<br>through your own az or gh login"]
-    end
-    session -- excerpts --> model
-    model -- report --> session
-    remote --> collect
+    transcripts["Transcripts<br>~/.claude/projects"] --> collect
+    git["git in each repository<br>branches, uncommitted and unpushed work"] --> collect
+    remote["Azure DevOps or GitHub<br>the state of each pull request named"] --> collect
+    collect["collect.py<br>keeps the day's prompts, leaves out claude -p runs"] --> digest["Digest<br>excerpts of the day's transcripts"]
+    digest -- excerpts --> model["LLM<br>judges topics, what was decided, done and found, what is open"]
+    model -- report --> render["render.py<br>builds the summary and the page"]
+    digest -- every figure, time and state --> render
+    render --> page["Summary in the session<br>and an HTML page in the plugin's data folder"]
+    render -. then deletes .-> digest
 ```
 
 It reads the transcripts Claude Code keeps on this machine under `~/.claude/projects`, for every repository you worked in that day. It runs `git` in each of those repositories, and `az` or `gh` to look up the pull requests the sessions named. Without `az` or `gh`, or without a login, a pull request's state is reported as not checked, never as pending.
 
-The model in your session reads the digest, so excerpts of that day's transcripts reach the model, the same way a file does when you ask Claude to read it. The lookups ask Azure DevOps or GitHub, through your own CLI login, for the state of each pull request named and for the account you are signed in as, which tells your new pull requests from your colleagues'. Nothing else leaves the machine, and the page loads nothing from the network.
+The model your session runs on reads the digest, so excerpts of that day's transcripts go wherever that model runs, the same way a file does when you ask Claude to read it. The lookups ask Azure DevOps or GitHub, through your own CLI login, for the state of each pull request named and for the account you are signed in as, which tells your new pull requests from your colleagues'. Nothing else leaves the machine, and the page loads nothing from the network.
 
 The report and the page are written to the plugin's own data folder, `~/.claude/plugins/data/remind-me-tundra/reports/`, and the digest is deleted once the report is rendered. The report records the work rather than the data the work touched, so credentials, people's names, customer and account identifiers, and anything read from a production system are left out.
 
