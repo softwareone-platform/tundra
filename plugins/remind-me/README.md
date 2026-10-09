@@ -11,9 +11,14 @@ What you left open in the Claude Code sessions you ran on a given day, grouped b
 
 The screenshots on this page show a fictional day.
 
+## Install
+
 ```
+/plugin marketplace add https://github.com/softwareone-platform/tundra.git
 /plugin install remind-me@tundra
 ```
+
+Run `/reload-plugins` afterwards to activate it.
 
 ## Use
 
@@ -38,13 +43,21 @@ flowchart TB
         transcripts["Transcripts<br>~/.claude/projects"] --> collect
         git["git in each repository<br>branches, uncommitted and unpushed work"] --> collect
         collect["collect.py<br>keeps the day's prompts, leaves out claude -p runs"] --> digest["Digest<br>excerpts of the day's transcripts"]
+        digest --> session["Your Claude Code session"]
         digest -- every figure, time and state --> render["render.py<br>builds the summary and the page"]
+        session -- report --> render
         render --> page["Summary in the session<br>and an HTML page in the plugin's data folder"]
         render -. then deletes .-> digest
     end
-    remote["Azure DevOps or GitHub<br>through your own az or gh login"] -- the state of each pull request named --> collect
-    digest -- excerpts --> model["The model behind your session<br>topics, what was decided, done and found, what is open"]
-    model -- report --> render
+    subgraph provider["Anthropic, or your cloud provider"]
+        model["The model<br>topics, what was decided, done and found, what is open"]
+    end
+    subgraph host["Azure DevOps or GitHub"]
+        remote["The state of each pull request named<br>through your own az or gh login"]
+    end
+    session -- excerpts --> model
+    model -- report --> session
+    remote --> collect
 ```
 
 It reads the transcripts Claude Code keeps on this machine under `~/.claude/projects`, for every repository you worked in that day. It runs `git` in each of those repositories, and `az` or `gh` to look up the pull requests the sessions named. Without `az` or `gh`, or without a login, a pull request's state is reported as not checked, never as pending.

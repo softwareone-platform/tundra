@@ -1,4 +1,4 @@
-<!-- translated from README.md, source sha256 99e5b6dfb8556e8d924309672866e6d06b3d2e5e5bc4eef40d8c5d8edc0ed114; see the root CLAUDE.md "Translations of a plugin's README" before editing -->
+<!-- translated from README.md, source sha256 460476c48ef976d864ce530969d13225744574e732a52dc0ded90cf7fc52d822; see the root CLAUDE.md "Translations of a plugin's README" before editing -->
 # remind-me
 
 [English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
@@ -6,15 +6,20 @@
 你在某一天运行过的 Claude Code session 还留下哪些没做完的事，按 repository 分组，逐一对照它们提到的 pull request 和 branch 的实时状态，并提供回到每个 session 自己文件夹的入口。
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/overview-dark.jpg">
-  <img alt="虚构一天的概览：repository 侧边栏、当天的标题和数字、按 repository 排列的每个 session 时间线，以及待决定和待做的事" src="docs/overview-light.jpg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/overview-dark.zh-CN.jpg">
+  <img alt="虚构一天的概览：repository 侧边栏、当天的标题和数字、按 repository 排列的每个 session 时间线，以及待决定和待做的事" src="docs/overview-light.zh-CN.jpg">
 </picture>
 
 本页的截图是虚构的一天。
 
+## 安装
+
 ```
+/plugin marketplace add https://github.com/softwareone-platform/tundra.git
 /plugin install remind-me@tundra
 ```
+
+安装后运行 `/reload-plugins` 启用它。
 
 ## 使用方法
 
@@ -25,8 +30,8 @@
 在侧边栏或时间线上选择一个 repository 或 session，就能看到它的主题、留下的待处理事项、它决定了什么、做了什么、查明了什么，以及带你回到它自己文件夹的按钮。仍在运行的 session 会被标记出来，而且不能从页面恢复，因为那样会把它打开两次。
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/session-dark.jpg">
-  <img alt="虚构一天里的一个 session：带有恢复按钮的标题区、它在 repository 时间线上被标出的横条，以及它留下的待处理事项和它决定、做了、查明的事" src="docs/session-light.jpg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/session-dark.zh-CN.jpg">
+  <img alt="虚构一天里的一个 session：带有恢复按钮的标题区、它在 repository 时间线上被标出的横条，以及它留下的待处理事项和它决定、做了、查明的事" src="docs/session-light.zh-CN.jpg">
 </picture>
 
 页面呈现的是那一天当时的样子，只根据当天的 prompt 判断；pull request 和 branch 则显示现在的状态，因为 session 留在审查中的 pull request，常常当天下午就合并了。
@@ -39,13 +44,21 @@ flowchart TB
         transcripts["Transcript<br>~/.claude/projects"] --> collect
         git["每个 repository 里的 git<br>branch、未 commit 和未 push 的工作"] --> collect
         collect["collect.py<br>保留当天的 prompt，排除 claude -p 运行记录"] --> digest["Digest<br>当天 transcript 的摘录"]
+        digest --> session["你的 Claude Code session"]
         digest -- 所有数字、时间和状态 --> render["render.py<br>生成摘要和页面"]
+        session -- 报告 --> render
         render --> page["session 里的摘要<br>以及 plugin 文件夹里的 HTML 页面"]
         render -. 随后删除 .-> digest
     end
-    remote["Azure DevOps 或 GitHub<br>通过你自己的 az 或 gh 登录"] -- 每个提到的 pull request 的状态 --> collect
-    digest -- 摘录 --> model["你的 session 背后的模型<br>主题、决定、完成和查明的事，以及待处理的事"]
-    model -- 报告 --> render
+    subgraph provider["Anthropic 或你的云服务提供商"]
+        model["模型<br>主题、决定、完成和查明的事，以及待处理的事"]
+    end
+    subgraph host["Azure DevOps 或 GitHub"]
+        remote["每个提到的 pull request 的状态<br>通过你自己的 az 或 gh 登录"]
+    end
+    session -- 摘录 --> model
+    model -- 报告 --> session
+    remote --> collect
 ```
 
 它读取 Claude Code 保存在这台机器 `~/.claude/projects` 下的 transcript，覆盖你当天工作过的每个 repository。它会在这些 repository 里运行 `git`，并用 `az` 或 `gh` 查询 session 提到的 pull request。没有 `az` 或 `gh`，或者没有登录时，pull request 的状态会标记为未查询，绝不会当成待审。
