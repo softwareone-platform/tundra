@@ -62,8 +62,18 @@ def _labels():
     return labels
 
 
+_DAY = "2026-10-05"
+
+
+def _stamp(when):
+    """A bare HH:MM falls on the fixture day, so a one-day case names only its times."""
+    return when if " " in when else "%s %s" % (_DAY, when)
+
+
 def _session(sid, first="09:00", last="10:00", cwd=None, **extra):
+    first, last = _stamp(first), _stamp(last)
     session = {"id": sid, "first": first, "last": last, "cwd": cwd or _folder("repo-a"),
+               "days": sorted({first.partition(" ")[0], last.partition(" ")[0]}),
                "usage": {"model": {"input_tokens": 10, "cache_creation_input_tokens": 5,
                                    "cache_read_input_tokens": 100, "output_tokens": 7}},
                "prompts": [{"kind": "prompt"}], "pull_requests_new": []}
@@ -78,7 +88,7 @@ def _group_of(name, sessions, **extra):
 
 
 def _digest(groups=None, **extra):
-    digest = {"day": "2026-10-05", "generated": "2026-10-06T08:00:00+02:00",
+    digest = {"from": _DAY, "to": _DAY, "earliest": "2026-09-05", "generated": "2026-10-06T08:00:00+02:00",
               "repositories": groups if groups is not None else [_group_of("repo-a", [_session("s1")])],
               "pull_requests": {}}
     digest.update(extra)
@@ -91,7 +101,7 @@ def _body(topics=("topic of the session",), open_items=(), done=()):
 
 def _report(sessions=None, **extra):
     """The smallest report the schema accepts for the default digest: every label and one session entry."""
-    report = {"day": "2026-10-05", "language": "en", "headline": "the headline", "labels": _labels(),
+    report = {"from": _DAY, "to": _DAY, "language": "en", "headline": "the headline", "labels": _labels(),
               "sessions": sessions if sessions is not None else {"s1": _body()}}
     report.update(extra)
     return report
@@ -168,20 +178,26 @@ def test_valid_report_has_no_problems():
 
 
 def test_missing_top_level_fields():
-    for key in ("day", "language", "headline", "labels", "sessions"):
+    for key in ("from", "to", "language", "headline", "labels", "sessions"):
         report = _report()
         del report[key]
         check("missing %s is named" % key, render.problems_in(report, _digest()), ["missing top-level field: %s" % key])
     # with a top-level field missing the rest cannot be read, so nothing past them is reported
     check("only top-level problems when one is missing",
-          render.problems_in({"day": "2000-01-01"}, _digest()),
+          render.problems_in({"from": "2000-01-01", "to": "2000-01-01"}, _digest()),
           ["missing top-level field: language", "missing top-level field: headline",
            "missing top-level field: labels", "missing top-level field: sessions"])
 
 
-def test_day_not_the_digests():
-    check("a different day is named", render.problems_in(_report(day="2026-10-04"), _digest()),
-          ["report day 2026-10-04 is not the digest's day 2026-10-05"])
+def test_range_not_the_digests():
+    check("a different from is named", render.problems_in(_report(**{"from": "2026-10-04"}), _digest()),
+          ["report from 2026-10-04 is not the digest's from 2026-10-05"])
+    check("a different to is named", render.problems_in(_report(to="2026-10-06"), _digest()),
+          ["report to 2026-10-06 is not the digest's to 2026-10-05"])
+    check("both ends differing are named, from first",
+          render.problems_in(_report(**{"from": "2026-10-04", "to": "2026-10-06"}), _digest()),
+          ["report from 2026-10-04 is not the digest's from 2026-10-05",
+           "report to 2026-10-06 is not the digest's to 2026-10-05"])
 
 
 def test_missing_labels():
@@ -342,12 +358,18 @@ def test_rows_for():
     s1 = _session("s1", first="09:00", last="10:00")
     s2 = _session("s2", first="09:30", last="11:00")
     s3 = _session("s3", first="10:30", last="12:00")
-    rows = render.rows_for({"sessions": [s1, s2, s3]})
+    # rows_for reads the view page() and summary() leave behind, so pin it to one day's view
+    saved = render.VIEW["range"]
+    render.VIEW["range"] = False
+    try:
+        rows = render.rows_for({"sessions": [s1, s2, s3]})
+        apart = render.rows_for({"sessions": [s1, _session("s4", first="10:01", last="10:30")]})
+        touching = render.rows_for({"sessions": [s1, _session("s5", first="10:00", last="10:30")]})
+    finally:
+        render.VIEW["range"] = saved
     check("overlapping sessions get separate lanes, others share",
           [[s["id"] for s in row["sessions"]] for row in rows], [["s1", "s3"], ["s2"]])
-    apart = render.rows_for({"sessions": [s1, _session("s4", first="10:01", last="10:30")]})
     check("sessions apart share one lane", [[s["id"] for s in row["sessions"]] for row in apart], [["s1", "s4"]])
-    touching = render.rows_for({"sessions": [s1, _session("s5", first="10:00", last="10:30")]})
     check("sessions sharing a minute do not share a lane",
           [[s["id"] for s in row["sessions"]] for row in touching], [["s1"], ["s5"]])
 
@@ -689,12 +711,12 @@ def test_summary_repositories_in_order():
 
 def test_main_refuses_invalid_report():
     report = _report()
-    del report["day"]
+    del report["from"]
     code, out, out_path = _main(report, _digest())
     check("exits 2", code, render.EXIT_SCHEMA)
     check("EXIT_SCHEMA is 2", render.EXIT_SCHEMA, 2)
     check("names the schema mismatch and the problem", out.splitlines(),
-          [SCHEMA_HEADER, "- missing top-level field: day"])
+          [SCHEMA_HEADER, "- missing top-level field: from"])
     check("no file written", os.path.exists(out_path), False)
 
 
@@ -752,7 +774,7 @@ def test_script_on_cp1252_console():
           "2026-10-05 \u00b7 1 [sessions] \u00b7 1 [repositories] \u00b7 15 [tokens]" in proc.stdout.decode("utf-8").splitlines(), True)
 
     bad = copy.deepcopy(_report())
-    bad["day"] = "2026-10-04"
+    bad["from"] = "2026-10-04"
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(bad, f)
     os.remove(out_path)
@@ -760,7 +782,7 @@ def test_script_on_cp1252_console():
                           capture_output=True, env=env, timeout=60)
     check("script exits 2 on a mismatch", proc.returncode, 2)
     check("script names the mismatch", proc.stdout.decode("utf-8").splitlines(),
-          [SCHEMA_HEADER, "- report day 2026-10-04 is not the digest's day 2026-10-05"])
+          [SCHEMA_HEADER, "- report from 2026-10-04 is not the digest's from 2026-10-05"])
     check("script writes nothing", os.path.exists(out_path), False)
 
 
@@ -1303,7 +1325,330 @@ def test_badge():
     check("the sidebar's counts read 99+", re.findall(r'<span class="badge(?: small)?">([^<]*)</span>', side), ["99+", "99+", "99+"])
 
 
-_TESTS = (test_valid_report_has_no_problems, test_missing_top_level_fields, test_day_not_the_digests,
+# ----- a range of days -----------------------------------------------------------
+
+_FROM, _TO = "2026-10-02", "2026-10-08"
+_SPAN = "%s \u2013 %s" % (_FROM, _TO)
+
+
+def _range_digest():
+    """A week with sessions on four days: 10-02 (Fri), 10-05 (Mon) running into 10-06, and 10-08 (Thu) in a second repository.
+    10-03 to 10-04 and 10-07 have none, so they fold into two gaps."""
+    sessions_a = [_session("a1", first="2026-10-02 09:15", last="2026-10-02 10:00"),
+                  _session("a2", first="2026-10-05 08:40", last="2026-10-06 11:20")]
+    sessions_b = [_session("b1", first="2026-10-08 14:00", last="2026-10-08 14:05", cwd=_folder("repo-b"))]
+    return _digest([_group_of("repo-a", sessions_a), _group_of("repo-b", sessions_b)], **{"from": _FROM, "to": _TO})
+
+
+def _range_report():
+    return _report({"a1": _body(), "a2": _body(), "b1": _body()}, **{"from": _FROM, "to": _TO})
+
+
+def _in_view(axis, fn):
+    """Run fn under one view: a range's when an axis is given, one day's otherwise, and put the view back afterwards."""
+    saved = dict(render.VIEW)
+    render.VIEW["range"], render.VIEW["axis"] = axis is not None, axis
+    try:
+        return fn()
+    finally:
+        render.VIEW.update(saved)
+
+
+def _markup(page):
+    """The page without its style and script, whose CSS and JavaScript name the range's classes and attributes on every page."""
+    page = re.sub(r"<style>.*?</style>", "", page, flags=re.S)
+    return re.sub(r"<script>.*?</script>", "", page, flags=re.S)
+
+
+def _timeline_of(panel):
+    start = panel.index('<section class="card timeline"')
+    return panel[start:panel.index("</section>", start)]
+
+
+def test_range_report_fields():
+    check("a range report matching its digest is valid", render.problems_in(_range_report(), _range_digest()), [])
+    check("a leftover day key is an unknown field",
+          render.problems_in(_report(day=_DAY), _digest()), ["unknown top-level field: day"])
+
+
+def test_single_and_span_text():
+    check("from equal to to is one day", render.single(_digest()), True)
+    check("from before to is a range", render.single(_range_digest()), False)
+    check("one day reads as its date", render.span_text(_digest()), "2026-10-05")
+    check("a range reads as both ends around a spaced en dash", render.span_text(_range_digest()), "2026-10-02 \u2013 2026-10-08")
+
+
+def test_clock_and_minutes():
+    # by hand: 9 * 60 + 30
+    check("clock is minutes past midnight", render.clock("2026-10-05 09:30"), 570)
+    check("clock ignores the date", render.clock("2026-10-06 09:30"), 570)
+    # by hand: 10 minutes to midnight plus 10 past it
+    check("minutes subtract across midnight", render.minutes("2026-10-06 00:10") - render.minutes("2026-10-05 23:50"), 20)
+    check("minutes subtract across a month's end", render.minutes("2026-10-01 00:00") - render.minutes("2026-09-30 23:59"), 1)
+    check("minutes subtract across whole days", render.minutes("2026-10-08 09:00") - render.minutes("2026-10-05 09:00"), 3 * 1440)
+
+
+def test_shown_and_stamp_html():
+    before = dict(render.VIEW)
+    one_day = _in_view(None, lambda: (render.shown("2026-10-05 09:00"), render.stamp_html("2026-10-05 09:00")))
+    check("one day shows the time alone", one_day[0], "09:00")
+    check("one day's page text is the time, with no time element", one_day[1], "09:00")
+    axis = render.day_axis(_range_digest())
+    on_range = _in_view(axis, lambda: (render.shown("2026-10-05 09:00"), render.stamp_html("2026-10-05 09:00")))
+    check("a range shows the month and day before the time", on_range[0], "10-05 09:00")
+    check("a range's page text carries the stamp in a time element", on_range[1],
+          '<time datetime="2026-10-05T09:00">10-05 09:00</time>')
+    check("the view is put back", render.VIEW, before)
+
+
+def test_length_across_days():
+    labels = _labels()
+    check("a session ending on a later day has no length",
+          render.length(_session("x", first="2026-10-05 23:00", last="2026-10-06 00:30"), labels), "")
+    check("a session within one day still has its length",
+          render.length(_session("x", first="2026-10-02 09:15", last="2026-10-02 10:00"), labels), "[duration_minutes 45]")
+    page = render.page(_range_report(), _range_digest())
+    check("on a range page a same-day session's head shows its length",
+          '<span class="span">[duration_minutes 45]</span>' in _head(_panel(page, "p-s-a1")), True)
+    check("on a range page a cross-day session's head shows an empty span",
+          '<span class="span"></span>' in _head(_panel(page, "p-s-a2")), True)
+
+
+def _shape(axis):
+    """Each column as its day or "gap", its weight and whether it is a Monday, the parts a hand derivation can name exactly."""
+    return [("gap" if column.get("gap") else column["day"], column["weight"], column.get("monday")) for column in axis["columns"]]
+
+
+def test_day_axis():
+    axis = render.day_axis(_range_digest())
+    # by hand: 10-02 day, 10-03 and 10-04 fold into one gap, 10-05 Monday, 10-06 day, 10-07 gap, 10-08 day
+    check("one column per day with sessions, a run without folded into one gap", _shape(axis),
+          [("2026-10-02", 1.0, False), ("gap", 0.28, None), ("2026-10-05", 1.0, True),
+           ("2026-10-06", 1.0, False), ("gap", 0.28, None), ("2026-10-08", 1.0, False)])
+    # by hand: weights sum to 4 + 2 * 0.28 = 4.56, so a day is 100 / 4.56 = 21.930 wide and a gap 28 / 4.56 = 6.140,
+    # and the left edges run 0, 1, 1.28, 2.28, 3.28 and 3.56 over 4.56
+    check("left edges in percent", [round(column["left"], 3) for column in axis["columns"]],
+          [0.0, 21.93, 28.07, 50.0, 71.93, 78.07])
+    check("widths in percent", [round(column["width"], 3) for column in axis["columns"]],
+          [21.93, 6.14, 21.93, 21.93, 6.14, 21.93])
+    check("widths sum to 100", round(sum(column["width"] for column in axis["columns"]), 9), 100.0)
+    check("each column starts where the last ended",
+          [round(left["left"] + left["width"] - right["left"], 9) for left, right in zip(axis["columns"], axis["columns"][1:])], [0.0] * 5)
+    check("the index holds the day columns only", sorted(axis["index"]), ["2026-10-02", "2026-10-05", "2026-10-06", "2026-10-08"])
+    check("the index points at the columns themselves",
+          all(axis["index"][column["day"]] is column for column in axis["columns"] if not column.get("gap")), True)
+    # by hand: the clocks are 09:15, 10:00, 08:40, 11:20, 14:00 and 14:05, so 08:00 down to 15:00 up
+    check("low is the earliest clock's hour", axis["low"], 8 * 60)
+    check("high is the hour after the latest clock", axis["high"], 15 * 60)
+
+
+def test_day_axis_reads_days():
+    # resumed on 10-04 with nothing on 10-03 or 10-05, so its days name a day between its first and last
+    session = _session("x", first="2026-10-02 09:00", last="2026-10-06 10:00", days=["2026-10-02", "2026-10-04", "2026-10-06"])
+    digest = _digest([_group_of("repo-a", [session])], **{"from": "2026-10-01", "to": "2026-10-07"})
+    # by hand: 10-05 is a Monday without a session, so it is a gap and no column is marked
+    check("the columns follow the days a session names, gaps at both ends", _shape(render.day_axis(digest)),
+          [("gap", 0.28, None), ("2026-10-02", 1.0, False), ("gap", 0.28, None), ("2026-10-04", 1.0, False),
+           ("gap", 0.28, None), ("2026-10-06", 1.0, False), ("gap", 0.28, None)])
+
+    long_run = _digest([_group_of("repo-a", [_session("x", first="2026-10-01 09:00", last="2026-10-10 10:00")])],
+                       **{"from": "2026-10-01", "to": "2026-10-10"})
+    axis = render.day_axis(long_run)
+    check("eight days without a session are one gap of the same weight", _shape(axis),
+          [("2026-10-01", 1.0, False), ("gap", 0.28, None), ("2026-10-10", 1.0, False)])
+    # by hand: 100 / 2.28 = 43.860 and 28 / 2.28 = 12.281
+    check("the folded gap stays narrow", [round(column["width"], 3) for column in axis["columns"]], [43.86, 12.281, 43.86])
+
+    instant = _digest([_group_of("repo-a", [_session("x", first="2026-10-05 09:00", last="2026-10-05 09:00")])],
+                      **{"from": "2026-10-05", "to": "2026-10-06"})
+    axis = render.day_axis(instant)
+    check("an instant at 09:00 spans 09:00 to 10:00", (axis["low"], axis["high"]), (540, 600))
+
+
+def _two_day_axis():
+    """Two whole days of 50% each, 09:00 to 10:00, so a position reads off by hand."""
+    digest = _digest([_group_of("repo-a", [_session("x", first="2026-10-05 09:00", last="2026-10-05 09:30"),
+                                           _session("y", first="2026-10-06 09:15", last="2026-10-06 09:45")])],
+                     **{"from": "2026-10-05", "to": "2026-10-06"})
+    return render.day_axis(digest)
+
+
+def test_position():
+    axis = _two_day_axis()
+    # by hand: pad is min(0.06, 3 / 500) = 0.006, so a day's inner track runs from 0.6% to 99.4% of its 50
+    got = _in_view(axis, lambda: [round(render.position(stamp), 6) for stamp in
+                                  ("2026-10-05 09:00", "2026-10-05 10:00", "2026-10-06 09:30", "2026-10-06 09:00")])
+    check("a stamp lands inside its day's gutters", got, [0.3, 49.7, 75.0, 50.3])
+
+    axis = render.day_axis(_range_digest())
+
+    def ends():
+        return [(column["left"], render.position(column["day"] + " 08:00"), render.position(column["day"] + " 15:00"), column["left"] + column["width"])
+                for column in axis["columns"] if not column.get("gap")]
+    check("the hour range's start and end stay strictly inside every day column",
+          [left < start < end < right for left, start, end, right in _in_view(axis, ends)], [True] * 4)
+
+    month = _digest([_group_of("repo-a", [_session("d%02d" % day, first="2026-09-%02d 09:00" % day, last="2026-09-%02d 17:00" % day)
+                                          for day in range(1, 31)])], **{"from": "2026-09-01", "to": "2026-09-30"})
+    axis = render.day_axis(month)
+    column = axis["index"]["2026-09-15"]
+    # by hand: a column of 100 / 30 = 3.333% would get 3 / 33.33 = 0.09, so the pad is capped at 0.06
+    check("on a narrow column the gutter is capped at 6% of the column",
+          round(_in_view(axis, lambda: render.position("2026-09-15 09:00")) - column["left"], 9), round(column["width"] * 0.06, 9))
+
+
+def _row_ids(rows):
+    return [[session["id"] for session in row["sessions"]] for row in rows]
+
+
+def test_rows_for_on_a_range():
+    filler = [_session("d%02d" % day, first="2026-09-%02d 09:00" % day, last="2026-09-%02d 17:00" % day, cwd=_folder("filler"))
+              for day in range(1, 31)]
+    near = [_session("n1", first="2026-09-15 09:00", last="2026-09-15 09:05"), _session("n2", first="2026-09-15 11:00", last="2026-09-15 11:05")]
+    far = [_session("f1", first="2026-09-01 09:00", last="2026-09-01 09:05"), _session("f2", first="2026-09-30 09:00", last="2026-09-30 09:05")]
+    month = _digest([_group_of("filler", filler), _group_of("near", near), _group_of("far", far)], **{"from": "2026-09-01", "to": "2026-09-30"})
+    axis = render.day_axis(month)
+    # by hand: a day is 3.333% wide with a 6% pad over 09:00 to 18:00, so a minute is 2.933 / 540 = 0.0054%,
+    # n1 ends 0.027% after it starts and n2 starts 0.652% after n1, past n1's end and its 0.25 margin,
+    # but n1 is drawn at least 0.9% wide, so with the margin it covers n2's start
+    check("two short sessions two hours apart on a month get a row each",
+          _row_ids(_in_view(axis, lambda: render.rows_for({"sessions": near}))), [["n1"], ["n2"]])
+    check("the same two on one day's view share a row", _row_ids(_in_view(None, lambda: render.rows_for({"sessions": near}))), [["n1", "n2"]])
+    check("sessions a month apart share a row", _row_ids(_in_view(axis, lambda: render.rows_for({"sessions": far}))), [["f1", "f2"]])
+
+    def margin(start):
+        group = [_session("m1", first="2026-10-05 09:00", last="2026-10-05 09:00"),
+                 _session("m2", first="2026-10-05 " + start, last="2026-10-05 11:30")]
+        digest = _digest([_group_of("repo-a", group), _group_of("repo-b", [_session("m3", first="2026-10-06 09:00", last="2026-10-06 09:30")])],
+                         **{"from": "2026-10-05", "to": "2026-10-06"})
+        axis = render.day_axis(digest)
+        return _row_ids(_in_view(axis, lambda: render.rows_for({"sessions": group})))
+    # by hand: two days of 50% over 09:00 to 12:00, pad 0.006, so a minute is 49.4 / 180 = 0.2744%,
+    # m1 sits at 0.3% and with its 0.9% minimum and 0.25 margin reaches 1.45%,
+    # m2 at 09:04 starts at 0.3 + 4 * 0.2744 = 1.398%, inside the margin only, and at 09:05 at 1.672%, past it
+    check("a start inside the margin after a minimum-width bar takes a new row", margin("09:04"), [["m1"], ["m2"]])
+    check("a start past the margin shares the row", margin("09:05"), [["m1", "m2"]])
+
+
+def test_range_timeline_markup():
+    page = render.page(_range_report(), _range_digest())
+    timeline = _timeline_of(_panel(page, "p-"))
+    ticks = re.search(r'<div class="ticks days" data-cuts="([^"]*)">(.*?)</div>', timeline)
+    check("the range's ticks carry the column edges", ticks is not None, True)
+    if ticks is None:
+        return
+    # by hand: the left edges after the first column, 1, 1.28, 2.28, 3.28 and 3.56 over 4.56, gaps included
+    check("data-cuts lists every edge after the first", ticks.group(1), "21.930 28.070 50.000 71.930 78.070")
+    # by hand: each day's middle, 0.5, 1.78, 2.78 and 4.06 over 4.56
+    check("one date tick per day column, Monday marked",
+          re.findall(r'<span class="dtick( mon)?" style="left:([0-9.]+)%"><time datetime="([^"]+)">([^<]+)</time></span>', ticks.group(2)),
+          [("", "10.965", "2026-10-02", "10-02"), (" mon", "39.035", "2026-10-05", "10-05"),
+           ("", "60.965", "2026-10-06", "10-06"), ("", "89.035", "2026-10-08", "10-08")])
+    check("no hour ticks on a range", re.search(r">\d\d:00</span>", ticks.group(2)), None)
+    tracks = re.findall(r'<div class="track" style="height:\d+px">(.*?)</div>', timeline)
+    check("one track per repository", len(tracks), 2)
+    for number, track in enumerate(tracks):
+        check("track %d draws a line per day and a band per gap" % number,
+              re.findall(r'<span class="(dayline(?: mon)?|gap)" style="([^"]*)"></span>', track),
+              [("dayline", "left:0.000%"), ("gap", "left:21.930%;width:6.140%"), ("dayline mon", "left:28.070%"),
+               ("dayline", "left:50.000%"), ("gap", "left:71.930%;width:6.140%"), ("dayline", "left:78.070%")])
+    bars = dict((sid, (label, width)) for sid, label, width in
+                re.findall(r'<button type="button" class="bar[^"]*" data-go="s-(\w+)" aria-label="([^"]*)" style="left:[0-9.]+%;width:([0-9.]+)%', timeline))
+    check("a session spanning days is one bar", timeline.count('data-go="s-a2"'), 1)
+    check("bars are labelled in plain text, dates included", {sid: label for sid, (label, _) in bars.items()},
+          {"a1": "repo-a 10-02 09:15-10-02 10:00", "a2": "repo-a 10-05 08:40-10-06 11:20", "b1": "repo-b 10-08 14:00-10-08 14:05"})
+    # by hand: five minutes of a 21.93% day over seven hours is 21.93 * 0.973 * 5 / 420 = 0.25%, under the minimum
+    check("a short bar is drawn at the minimum width", bars.get("b1", (None, None))[1], "0.90")
+
+
+def test_one_day_timeline_markup():
+    markup = _markup(render.page(_report(), _digest()))
+    for literal in ("<time", "data-cuts", "dayline", 'class="gap"', "dtick"):
+        check("a one-day page has no %s" % literal, literal in markup, False)
+    # by hand: s1 runs 09:00 to 10:00, so the axis is 09:00 to 11:00 and each hour is half its width
+    check("a one-day page has hour ticks",
+          '<div class="ticks"><span style="left:0.00%">09:00</span><span style="left:50.00%">10:00</span>'
+          '<span style="left:100.00%">11:00</span></div>' in markup, True)
+
+
+def _sidebar_child(page, sid):
+    return re.search(r'<button type="button" class="nav child" data-go="s-%s" title="([^"]*)">(.*?)</button>' % sid, page)
+
+
+def test_range_text_and_attributes():
+    digest = _range_digest()
+    page = render.page(_range_report(), digest)
+    a2 = '<time datetime="2026-10-05T08:40">10-05 08:40</time>'
+    check("the session head's title is two time elements",
+          '<h2>%s\u2013<time datetime="2026-10-06T11:20">10-06 11:20</time> <span class="span"></span></h2>' % a2
+          in _head(_panel(page, "p-s-a2")), True)
+    child = _sidebar_child(page, "a2")
+    check("the sidebar child is found", child is not None, True)
+    if child is not None:
+        check("the sidebar child's title attribute is plain", child.group(1), "10-05 08:40 topic of the session")
+        check("the sidebar child's text carries a time element",
+              child.group(2), '<span class="nm"><span class="at">%s</span>topic of the session</span>' % a2)
+    trail = re.search(r'<div class="trail-of" data-for="s-a2"[^>]*>(.*?)</div>', page).group(1)
+    check("the trail's session step carries a time element",
+          trail.endswith('<span class="here"><span class="at">%s</span>topic of the session</span></nav>' % a2), True)
+    # by hand: the earliest first is a1's 10-02 09:15 and the latest last b1's 10-08 14:05
+    check("the overview timeline heading carries two time elements",
+          '<h2>[timeline] <span><time datetime="2026-10-02T09:15">10-02 09:15</time>\u2013'
+          '<time datetime="2026-10-08T14:05">10-08 14:05</time></span></h2>' in _timeline_of(_panel(page, "p-")), True)
+    check("the session panel's data-title is plain",
+          re.search(r'<section class="panel" id="p-s-a2" [^>]*data-title="([^"]*)"', page).group(1),
+          "repo-a 10-05 08:40 \u00b7 remind-me " + _SPAN)
+    # a2 ends 10-06 11:20, after a1's 10-02 10:00, so it is the session the shortcut resumes
+    titles = re.findall(r'<a class="btn" href="[^"]*" title="([^"]*)">', _head(_panel(page, "p-r-repo-a")))
+    check("the repository's resume-last title is plain",
+          titles, [html.escape("%s 10-05 08:40-10-06 11:20" % _folder("repo-a"), quote=True)])
+    attributes = re.findall(r' (?:title|aria-label|data-title)="([^"]*)"', page)
+    check("no attribute on the page carries a time element", [value for value in attributes if "&lt;time" in value], [])
+
+
+def test_range_headings():
+    page = render.page(_range_report(), _range_digest())
+    check("the sidebar names the range", ('<div class="day">%s</div>' % _SPAN) in page, True)
+    eyebrow = re.search(r'<span class="eyebrow">%s(.*?)</span>' % _ICON, _panel(page, "p-")).group(1)
+    check("the overview eyebrow names the range", eyebrow, "[level_day] \u00b7 " + _SPAN)
+    check("the page title names the range", ("<title>remind-me %s</title>" % _SPAN) in page, True)
+
+
+def test_summary_on_a_range():
+    out = os.path.join(tempfile.mkdtemp(), "report.html")
+    # the view left by a one-day page, so only summary() setting it itself gives the dates
+    got = _in_view(None, lambda: render.summary(_range_report(), _range_digest(), out))
+    lines = got.splitlines()
+    # by hand: three sessions of 10 + 5 charged each, in two repositories
+    check("the figures line opens with the range",
+          lines[2], "%s \u00b7 3 [sessions] \u00b7 2 [repositories] \u00b7 45 [tokens]" % _SPAN)
+    check("each session line shows both dates",
+          [line for line in lines if line.startswith("- ")],
+          ["- **10-02 09:15\u201310-02 10:00** topic of the session", "- **10-05 08:40\u201310-06 11:20** topic of the session",
+           "- **10-08 14:00\u201310-08 14:05** topic of the session"])
+
+
+def test_view_does_not_leak():
+    render.page(_range_report(), _range_digest())
+    markup = _markup(render.page(_report(), _digest()))
+    check("a one-day page right after a range has no time element", "<time" in markup, False)
+    check("a one-day page right after a range has hour ticks", '<div class="ticks"><span style="left:0.00%">09:00</span>' in markup, True)
+    check("a one-day page right after a range has no day lines", "dayline" in markup, False)
+    check("its sidebar child shows the time alone", _sidebar_child(markup, "s1").group(1), "09:00 topic of the session")
+
+    render.summary(_range_report(), _range_digest(), "x.html")
+    got = render.summary(_report(), _digest(), "x.html")
+    check("a one-day summary right after a range shows times alone",
+          [line for line in got.splitlines() if line.startswith("- ")], ["- **09:00\u201310:00** topic of the session"])
+    check("its figures line opens with the day", got.splitlines()[2].startswith("2026-10-05 \u00b7 "), True)
+
+    render.page(_range_report(), _range_digest())
+    got = render.summary(_report(), _digest(), "x.html")
+    check("a one-day summary right after a range page shows times alone",
+          [line for line in got.splitlines() if line.startswith("- ")], ["- **09:00\u201310:00** topic of the session"])
+
+
+_TESTS = (test_valid_report_has_no_problems, test_missing_top_level_fields, test_range_not_the_digests,
           test_missing_labels, test_session_not_in_digest, test_digest_session_without_entry,
           test_session_without_topics, test_open_item_kind_and_text,
           test_tokens, test_compact, test_compact_top_unit, test_figures, test_figures_on_page,
@@ -1329,7 +1674,11 @@ _TESTS = (test_valid_report_has_no_problems, test_missing_top_level_fields, test
           test_item_anchors_and_links, test_lanes_below_the_overview, test_levels_fold_past_limit,
           test_folded_links_land_on_folded_items,
           test_slugs, test_panel_keys, test_running_count_chip, test_summary_excludes_what_happened,
-          test_fill_and_length, test_session_position, test_badge)
+          test_fill_and_length, test_session_position, test_badge,
+          test_range_report_fields, test_single_and_span_text, test_clock_and_minutes, test_shown_and_stamp_html,
+          test_length_across_days, test_day_axis, test_day_axis_reads_days, test_position, test_rows_for_on_a_range,
+          test_range_timeline_markup, test_one_day_timeline_markup, test_range_text_and_attributes, test_range_headings,
+          test_summary_on_a_range, test_view_does_not_leak)
 
 
 def _run_all():

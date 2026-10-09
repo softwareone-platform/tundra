@@ -4,7 +4,8 @@ One JSON object, written by the model and read by `scripts/render.py` together w
 
 ```json
 {
-  "day": "2026-10-05",
+  "from": "2026-10-05",
+  "to": "2026-10-05",
   "language": "en",
   "headline": "One sentence, in words, on what matters most about the day.",
   "labels": { "sessions": "sessions", "...": "..." },
@@ -23,7 +24,7 @@ One JSON object, written by the model and read by `scripts/render.py` together w
 }
 ```
 
-- `day` is the digest's day.
+- `from` and `to` are the digest's `from` and `to`: the same day for a one-day report.
 - `headline` carries no counts. The figures under it come from the digest, and a number the model writes there, as in any item's text, is one nothing checks; above the figures it would read as one of them.
 - `language` is a BCP 47 tag such as `en` or `zh-TW`, and it sets the page's `lang`.
 - `sessions` has one entry for every session in the digest, keyed by its id, and none for a session the digest does not have.

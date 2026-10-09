@@ -51,6 +51,9 @@ _SCRIPT = os.path.join(_SCRIPTS, "collect.py")
 DAY = "2026-09-04"
 PREV = "2026-09-03"
 TODAY = "2026-09-07"
+# the Wednesday before PREV and the Saturday after DAY, for ranges and sessions that cross a day
+BEFORE = "2026-09-02"
+NEXT = "2026-09-05"
 
 # a folder outside any repository, where a session can run
 FOLDER = _tempdir()
@@ -176,7 +179,9 @@ def _projects(files):
 
 def _session(records, day=DAY, name="s1"):
     root = _projects({"proj/%s.jsonl" % name: records})
-    return cl.read_session(os.path.join(root, "proj", name + ".jsonl"), day)
+    # read_session takes a set of days, and a single day string would match only by substring
+    days = {day} if isinstance(day, str) else set(day)
+    return cl.read_session(os.path.join(root, "proj", name + ".jsonl"), days)
 
 
 def _collect(files, day=DAY, here=None, **kwargs):
@@ -186,7 +191,18 @@ def _collect(files, day=DAY, here=None, **kwargs):
     saved = os.getcwd()
     os.chdir(here or _tempdir())
     try:
-        return cl.collect(day, root=root, **kwargs)
+        return cl.collect(first=day, last=day, root=root, **kwargs)
+    finally:
+        os.chdir(saved)
+
+
+def _collect_span(files, first, last, **kwargs):
+    """Run collect over a range of days from a non-repository folder, as _collect does for one day."""
+    root = _projects(files)
+    saved = os.getcwd()
+    os.chdir(_tempdir())
+    try:
+        return cl.collect(first=first, last=last, root=root, **kwargs)
     finally:
         os.chdir(saved)
 
@@ -265,7 +281,7 @@ def test_work_days():
     check("a day whose only prompt is the /remind-me command is not a work day",
           _work_days([_user("<command-name>/remind-me</command-name>")]), set())
     check("a day whose only prompt types /remind-me is not a work day",
-          _work_days([_user("/remind-me --day 2026-09-03")]), set())
+          _work_days([_user("/remind-me --from 2026-09-03")]), set())
     check("a day with only a tool result is not a work day", _work_days([_user([_tool_result("ok")])]), set())
     check("a day with only an isMeta entry is not a work day",
           _work_days([_user("Base directory for this skill", isMeta=True)]), set())
@@ -375,7 +391,7 @@ def test_typed_prompt_interrupted():
 
 def test_invokes_remind_me():
     check("the slash command", cl.invokes_remind_me("/remind-me"), True)
-    check("the slash command with args after whitespace", cl.invokes_remind_me("  /remind-me --day 2026-09-04"), True)
+    check("the slash command with args after whitespace", cl.invokes_remind_me("  /remind-me --from 2026-09-04"), True)
     check("the command as typed_prompt renders it", cl.invokes_remind_me(
         cl.typed_prompt(_user("<command-name>/remind-me:remind-me</command-name>"))[1]), True)
     check("the plugin-qualified name in the head", cl.invokes_remind_me("run remind-me:remind-me please"), True)
@@ -458,7 +474,7 @@ def test_subagent_usage():
         "proj/s1/subagents/a2.jsonl": [_assistant("d", msg_id="sb1", usage=_usage(5), model="claude-y")],
     })
     totals = {"claude-x": dict.fromkeys(cl.USAGE_FIELDS, 1)}
-    cl.subagent_usage(os.path.join(root, "proj", "s1.jsonl"), DAY, totals)
+    cl.subagent_usage(os.path.join(root, "proj", "s1.jsonl"), {DAY}, totals)
     check("same-day subagent usage added, other days and broken lines ignored",
           totals, {"claude-x": dict.fromkeys(cl.USAGE_FIELDS, 1),
                    "claude-y": {"input_tokens": 8, "output_tokens": 1, "cache_read_input_tokens": 0,
@@ -471,7 +487,6 @@ def _rich_session():
     root = _projects({
         "proj/s1.jsonl": [
             _user("fix the build", at="10:00", branch="main"),
-            _user("<command-name>/remind-me</command-name>", at="10:01"),
             _assistant("Want me to open the PR?", at="10:05", msg_id="m1", usage=_usage(10, 5), branch="HEAD"),
             _assistant([_tool_use("Bash", "git commit -m wip && git push origin feature")], at="10:05",
                        msg_id="m1", usage=_usage(10, 5), branch="feature"),
@@ -486,12 +501,14 @@ def _rich_session():
             _assistant("subagent words?", at="11:01", msg_id="m3", usage=_usage(1000), isSidechain=True),
             _assistant([_tool_use("PowerShell", "gh pr create --title x"), {"type": "text", "text": "   "}],
                        at="11:02", msg_id="m4"),
+            # the run ends the day, because everything after it up to the next typed prompt belongs to the run
+            _user("<command-name>/remind-me</command-name>", at="11:03"),
             _user("yesterday's prompt", at="09:00", day=PREV),
             "not json at all",
         ],
         "proj/s1/subagents/a1.jsonl": [_assistant("sub", msg_id="sa1", usage=_usage(3), model="claude-y")],
     })
-    return cl.read_session(os.path.join(root, "proj", "s1.jsonl"), DAY)
+    return cl.read_session(os.path.join(root, "proj", "s1.jsonl"), {DAY})
 
 
 def test_read_session():
@@ -500,15 +517,16 @@ def test_read_session():
     check("cwd", session["cwd"], FOLDER)
     check("entrypoint", session["entrypoint"], "cli")
     check("branches in order, HEAD left out", session["branches"], ["main", "feature"])
-    check("first and last clock of the day", (session["first"], session["last"]), ("10:00", "11:02"))
+    check("first and last day and clock", (session["first"], session["last"]), (DAY + " 10:00", DAY + " 11:02"))
+    check("the days the session has entries on", session["days"], [DAY])
     # the request that runs this skill is not part of the day it reports on
     check("prompts without the remind-me run", session["prompts"],
-          [{"at": "10:00", "kind": "prompt", "text": "fix the build"}])
-    check("questions", session["questions"], [{"at": "10:05", "text": "Want me to open the PR?"}])
+          [{"at": DAY + " 10:00", "kind": "prompt", "text": "fix the build"}])
+    check("questions", session["questions"], [{"at": DAY + " 10:05", "text": "Want me to open the PR?"}])
     check("pull requests from results, replies and commands, sorted", session["pull_requests"],
           ["azure:151943", "azure:888", "github:acme/widgets#12"])
     check("last reply is the last non-blank text", session["last_reply"],
-          {"at": "11:00", "text": "Merged. See https://github.com/acme/widgets/pull/12"})
+          {"at": DAY + " 11:00", "text": "Merged. See https://github.com/acme/widgets/pull/12"})
     check("usage: split reply once, sidechain left out, subagent added", session["usage"],
           {"claude-x": {"input_tokens": 30, "output_tokens": 11, "cache_read_input_tokens": 0,
                         "cache_creation_input_tokens": 0},
@@ -560,16 +578,17 @@ def test_read_session_after_the_day():
               branch="later"),
     ])
     check("a session carries no later_prompts", "later_prompts" in session, False)
-    check("later entries leave first and last alone", (session["first"], session["last"]), ("10:00", "11:00"))
+    check("later entries leave first and last alone", (session["first"], session["last"]),
+          (DAY + " 10:00", DAY + " 11:00"))
     check("typed prompts and commands after the day are not prompts", session["prompts"],
-          [{"at": "10:00", "kind": "prompt", "text": "fix the build"}])
+          [{"at": DAY + " 10:00", "kind": "prompt", "text": "fix the build"}])
     check("later entries leave usage alone", session["usage"],
           {"claude-x": {"input_tokens": 5, "output_tokens": 1, "cache_read_input_tokens": 0,
                         "cache_creation_input_tokens": 0}})
     check("later entries leave pull requests alone", session["pull_requests"], [])
     check("later entries leave branches alone", session["branches"], ["main"])
     check("a later reply is neither a question nor the last reply", (session["questions"], session["last_reply"]),
-          ([], {"at": "11:00", "text": "Done."}))
+          ([], {"at": DAY + " 11:00", "text": "Done."}))
 
 
 def test_read_session_interrupted():
@@ -584,9 +603,9 @@ def test_read_session_interrupted():
         _user("do not push yet", at="10:06"),
     ])
     check("interruptions on the day are not prompts, the prompts after them are", session["prompts"],
-          [{"at": "10:00", "kind": "prompt", "text": "fix the build"},
-           {"at": "10:03", "kind": "prompt", "text": "fix the tests instead"},
-           {"at": "10:06", "kind": "prompt", "text": "do not push yet"}])
+          [{"at": DAY + " 10:00", "kind": "prompt", "text": "fix the build"},
+           {"at": DAY + " 10:03", "kind": "prompt", "text": "fix the tests instead"},
+           {"at": DAY + " 10:06", "kind": "prompt", "text": "do not push yet"}])
 
 
 def test_read_session_only_later():
@@ -628,6 +647,121 @@ def test_read_session_cwd():
     check("a leading empty cwd is skipped like a missing one", session["cwd"], first)
 
 
+# ----- ranges: span_days, read_session and subagent_usage over several days ---------
+
+def test_span_days():
+    check("one day is one element", cl.span_days(DAY, DAY), {DAY})
+    check("both ends included", cl.span_days(PREV, DAY), {PREV, DAY})
+    check("a range across a month boundary is every date in it",
+          sorted(cl.span_days("2026-08-30", "2026-09-02")), ["2026-08-30", "2026-08-31", "2026-09-01", "2026-09-02"])
+
+
+def test_read_session_days():
+    session = _session([
+        _user("wednesday", day=BEFORE),
+        _user("thursday", day=PREV),
+        _user("friday"),
+        _user("saturday", day=NEXT),
+    ], day={PREV, DAY})
+    check("prompts on every day of the set, none from outside it", session["prompts"],
+          [{"at": PREV + " 10:00", "kind": "prompt", "text": "thursday"},
+           {"at": DAY + " 10:00", "kind": "prompt", "text": "friday"}])
+    check("days are the dates of the kept entries", session["days"], [PREV, DAY])
+    check("first and last span the set's days", (session["first"], session["last"]),
+          (PREV + " 10:00", DAY + " 10:00"))
+
+
+def test_read_session_across_days():
+    session = _session([
+        _user("fix the build", at="22:00"),
+        _assistant("Want me to push?", at="01:30", day=NEXT, msg_id="m1"),
+    ], day={DAY, NEXT})
+    check("first and last carry their own dates", (session["first"], session["last"]),
+          (DAY + " 22:00", NEXT + " 01:30"))
+    check("a session over two days lists both", session["days"], [DAY, NEXT])
+    check("a question carries its date", session["questions"], [{"at": NEXT + " 01:30", "text": "Want me to push?"}])
+    check("the last reply carries its date", session["last_reply"], {"at": NEXT + " 01:30", "text": "Want me to push?"})
+
+
+def test_subagent_usage_days():
+    root = _projects({
+        "proj/s1.jsonl": [_user("x")],
+        "proj/s1/subagents/a1.jsonl": [
+            _assistant("a", msg_id="p1", usage=_usage(3, 1), model="claude-y", day=PREV),
+            _assistant("b", msg_id="d1", usage=_usage(5, 2), model="claude-y"),
+            _assistant("c", msg_id="t1", usage=_usage(100, 100), model="claude-y", day=TODAY),
+        ],
+    })
+    totals = {}
+    cl.subagent_usage(os.path.join(root, "proj", "s1.jsonl"), {PREV, DAY}, totals)
+    check("subagent usage from two days of the set summed, a day outside it left out", totals,
+          {"claude-y": {"input_tokens": 8, "output_tokens": 3, "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0}})
+
+
+# ----- read_session: a run of this skill is skipped ---------------------------------
+
+def test_read_session_remind_me_run():
+    session = _session([
+        _user("fix the build", at="10:00", branch="main"),
+        _assistant("Done.", at="10:01", msg_id="m1", usage=_usage(5, 1)),
+        _user("/remind-me --from 2026-09-03", at="10:02"),
+        _assistant("Want me to open !4001?", at="10:03", msg_id="m2", usage=_usage(100, 50), branch="run"),
+        _assistant([_tool_use("Bash", "az repos pr show --id 4002")], at="10:04", msg_id="m3", usage=_usage(7),
+                   branch="run"),
+        _user([_tool_result("Created !4003")], at="10:05", branch="run"),
+        _interrupt(INTERRUPTED, at="10:06", branch="run"),
+        # still inside the run, since neither the tool result nor the interruption is the person typing
+        _assistant("Shall I go on? https://github.com/acme/widgets/pull/9", at="10:07", msg_id="m4",
+                   usage=_usage(11), branch="run"),
+        _user(cl.COMPACTION_PREFIX + ". Pending: push the branch.", at="10:08", branch="run"),
+        _assistant("After the summary, see !4004?", at="10:09", msg_id="m5", usage=_usage(9), branch="run"),
+        _user("<command-name>/review</command-name><command-args>42</command-args>", at="10:10", branch="next"),
+        _assistant("Reviewed.", at="10:11", msg_id="m6", usage=_usage(2, 1), branch="next"),
+    ])
+    # a compaction summary is not the person, so it neither ends the run nor becomes a prompt
+    check("the run's prompt and summary are not prompts, the command after it is", session["prompts"],
+          [{"at": DAY + " 10:00", "kind": "prompt", "text": "fix the build"},
+           {"at": DAY + " 10:10", "kind": "command", "text": "/review 42"}])
+    check("the run's replies are not questions", session["questions"], [])
+    check("the last reply is the one after the run", session["last_reply"], {"at": DAY + " 10:11", "text": "Reviewed."})
+    check("the run's usage is left out", session["usage"],
+          {"claude-x": {"input_tokens": 7, "output_tokens": 2, "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0}})
+    check("pull requests named in the run's results, replies and commands are left out", session["pull_requests"], [])
+    check("the run's branch is left out", session["branches"], ["main", "next"])
+    check("first and last are the entries around the run", (session["first"], session["last"]),
+          (DAY + " 10:00", DAY + " 10:11"))
+
+
+def test_read_session_remind_me_run_ended_by_prompt():
+    session = _session([
+        _user("<command-name>/remind-me</command-name>", at="09:00"),
+        _assistant("Anything else?", at="09:05", msg_id="m1"),
+        _user("fix the build", at="09:30"),
+        _assistant("Done.", at="09:40", msg_id="m2"),
+    ])
+    check("a typed prompt ends the run and is kept", session["prompts"],
+          [{"at": DAY + " 09:30", "kind": "prompt", "text": "fix the build"}])
+    check("the session starts at the prompt that ended the run", session["first"], DAY + " 09:30")
+    check("the run's question is left out", session["questions"], [])
+    check("the last reply is after the run", session["last_reply"], {"at": DAY + " 09:40", "text": "Done."})
+
+
+def test_read_session_remind_me_run_days():
+    session = _session([
+        _user("fix the build", at="10:00"),
+        _user("<command-name>/remind-me</command-name>", at="23:50"),
+        _assistant("The report.", at="00:10", day=NEXT, msg_id="m1", usage=_usage(50)),
+        _user([_tool_result("ok")], at="00:11", day=NEXT),
+        _user("saturday", day=TODAY),
+    ], day={DAY, NEXT})
+    # the next day holds only the run's entries, and the prompt after them falls outside the set
+    check("a day holding only a run is not listed, nor is a day outside the set",
+          (session["first"], session["last"], session["days"]), (DAY + " 10:00", DAY + " 10:00", [DAY]))
+    check("the run leaves no last reply and no usage", (session["last_reply"], session["usage"]), (None, {}))
+
+
 # ----- collect: which sessions, grouped how --------------------------------------
 
 def test_collect_left_out_and_dropped():
@@ -640,7 +774,7 @@ def test_collect_left_out_and_dropped():
         "proj/k1.jsonl": [_user("kept")],
         "proj/u1.jsonl": [_user("no folder", cwd=None)],
     }, live=False, today=TODAY)
-    check("day", digest["day"], DAY)
+    check("the range is the one day", (digest["from"], digest["to"]), (DAY, DAY))
     check("headless sessions counted", digest["left_out"], {"headless": 1})
     check("only sessions with prompts that day, grouped by folder", _summary(digest),
           [("(unknown folder)", False, False, ["u1"]), (FOLDER, False, False, ["k1"])])
@@ -689,10 +823,11 @@ def test_collect_default_day():
     files = {"proj/a.jsonl": [_user("thursday", day=PREV)], "proj/b.jsonl": [_user("friday", day=DAY)],
              "proj/c.jsonl": [_user("monday", day=TODAY)]}
     digest = _collect(files, day=None, live=False, today=TODAY)
-    check("no day given reports the latest day before today", (digest["day"], _summary(digest)),
-          (DAY, [(FOLDER, False, False, ["b"])]))
+    check("no day given reports the latest day before today",
+          (digest["from"], digest["to"], _summary(digest)), (DAY, DAY, [(FOLDER, False, False, ["b"])]))
     digest = _collect({"proj/c.jsonl": [_user("monday", day=TODAY)]}, day=None, live=False, today=TODAY)
-    check("only today has entries: no day, nothing reported", (digest["day"], digest["repositories"]), (None, []))
+    check("only today has entries: no first day, nothing reported",
+          (digest["from"], digest["to"], digest["repositories"]), (None, None, []))
 
 
 def test_collect_live_pull_requests_new():
@@ -738,10 +873,10 @@ def test_collect_default_day_work_days():
                                              _assistant("the report", day=DAY)]})
     digest = _collect(headless, day=None, live=False, today=TODAY)
     check("a later day with only a claude -p run gives way to the earlier day with work",
-          (digest["day"], _summary(digest)), (PREV, [(FOLDER, False, False, ["a"])]))
+          (digest["from"], digest["to"], _summary(digest)), (PREV, PREV, [(FOLDER, False, False, ["a"])]))
     digest = _collect(remind, day=None, live=False, today=TODAY)
     check("a later day with only a /remind-me run gives way to the earlier day with work",
-          (digest["day"], _summary(digest)), (PREV, [(FOLDER, False, False, ["a"])]))
+          (digest["from"], digest["to"], _summary(digest)), (PREV, PREV, [(FOLDER, False, False, ["a"])]))
 
 
 def test_collect_live_merged_by():
@@ -842,12 +977,87 @@ def test_collect_output_shape():
     # the full set, so a key that was removed cannot come back unnoticed
     check("a session on the live path carries exactly these keys",
           sorted(digest["repositories"][0]["sessions"][0]),
-          sorted(["id", "cwd", "branches", "first", "last", "prompts", "questions", "pull_requests",
+          sorted(["id", "cwd", "branches", "first", "last", "days", "prompts", "questions", "pull_requests",
                   "pull_requests_new", "last_reply", "usage", "running"]))
     check("the digest on the live path carries exactly these keys", sorted(digest),
-          sorted(["day", "generated", "left_out", "repositories", "pull_requests", "identities"]))
+          sorted(["from", "to", "earliest", "generated", "left_out", "repositories", "pull_requests", "identities"]))
     check("the digest carries identities on the live path", digest["identities"], ["ann@example.com"])
     check("no pull request named, so no CLI asked", calls, [])
+
+
+# ----- collect over a range of days ---------------------------------------------
+
+def test_collect_range():
+    digest = _collect_span({
+        "proj/a1.jsonl": [_user("thursday", day=PREV)],
+        "proj/b1.jsonl": [_user("friday")],
+        "proj/c1.jsonl": [_user("wednesday", day=BEFORE)],
+        "proj/d1.jsonl": [_user("saturday", day=NEXT)],
+        "proj/e1.jsonl": [_user("thursday night", at="22:00", day=PREV), _user("friday morning", at="09:00")],
+        "proj/f1.jsonl": [_user("wednesday", day=BEFORE), _user("saturday", day=NEXT)],
+    }, PREV, DAY, live=False, today=TODAY)
+    check("the digest's range is the one asked for", (digest["from"], digest["to"]), (PREV, DAY))
+    check("sessions on any day of the range kept, those only before or after it dropped", _summary(digest),
+          [(FOLDER, False, False, ["a1", "e1", "b1"])])
+    spanning = [s for s in digest["repositories"][0]["sessions"] if s["id"] == "e1"][0]
+    check("a session over two days of the range keeps the entries of both", spanning["prompts"],
+          [{"at": PREV + " 22:00", "kind": "prompt", "text": "thursday night"},
+           {"at": DAY + " 09:00", "kind": "prompt", "text": "friday morning"}])
+    check("and lists both days", spanning["days"], [PREV, DAY])
+
+
+def test_collect_earliest():
+    kept = {"proj/k1.jsonl": [_user("kept")]}
+    digest = _collect(kept, live=False, today=TODAY)
+    check("only the day itself is the earliest", digest["earliest"], DAY)
+    digest = _collect(dict(kept, **{"proj/o1.jsonl": [_user("monday before", day="2026-08-31")]}),
+                      live=False, today=TODAY)
+    check("a transcript outside the range still sets the earliest", digest["earliest"], "2026-08-31")
+    digest = _collect(dict(kept, **{"proj/h1.jsonl": [_user("probe", day="2026-08-30", entrypoint="sdk-cli"),
+                                                      _user("probe", entrypoint="sdk-cli")]}), live=False, today=TODAY)
+    check("a headless transcript left out still sets the earliest", (digest["earliest"], digest["left_out"]),
+          ("2026-08-30", {"headless": 1}))
+    digest = _collect(dict(kept, **{"proj/n1.jsonl": [_assistant("old reply", day="2026-08-29"),
+                                                      _assistant("a reply with no prompt")]}), live=False, today=TODAY)
+    check("a transcript dropped for having no prompts still sets the earliest", (digest["earliest"], _summary(digest)),
+          ("2026-08-29", [(FOLDER, False, False, ["k1"])]))
+    # with no day before today holding work, collect returns before it reads a transcript's days
+    digest = _collect({"proj/c.jsonl": [_user("monday", day=TODAY)]}, day=None, live=False, today=TODAY)
+    check("no default day leaves earliest None", digest["earliest"], None)
+
+
+def test_collect_remind_me_run_dropped():
+    digest = _collect_span({
+        "proj/r1.jsonl": [_user("wednesday", day=BEFORE),
+                          _user("/remind-me --from 2026-09-02", at="09:00", day=PREV),
+                          _assistant("The report. Want me to go on?", at="09:05", day=PREV),
+                          _user([_tool_result("Created !5001")], at="09:06")],
+        "proj/k1.jsonl": [_user("kept")],
+    }, PREV, DAY, live=False, today=TODAY)
+    check("a session whose only content in the range is a run is dropped", _summary(digest),
+          [(FOLDER, False, False, ["k1"])])
+
+
+def test_collect_live_pull_requests_new_range():
+    repo = _repo()
+    _git(repo, "remote", "add", "origin", "https://dev.azure.com/acme/proj/_git/widgets")
+    states = {"3001": {"status": "active", "created": _local(PREV, "09:00"), "author": "ann@example.com"},
+              "3002": {"status": "active", "created": _local(DAY, "09:00"), "author": "ann@example.com"},
+              "3003": {"status": "active", "created": _local(BEFORE, "23:59"), "author": "ann@example.com"}}
+
+    def answer(argv):
+        if argv[:4] == ["az", "repos", "pr", "show"]:
+            return True, json.dumps(states[argv[argv.index("--id") + 1]])
+        if argv[:3] == ["az", "account", "show"]:
+            return True, "ann@example.com\n"
+        return False, "not answered by the tests"
+
+    digest, _ = _with_cli(answer, lambda: _collect_span({"proj/s1.jsonl": [
+        _user("go", day=PREV, cwd=repo), _assistant("opened !3001, compared with !3003", day=PREV, cwd=repo),
+        _user("again", cwd=repo), _assistant("opened !3002", cwd=repo)]}, PREV, DAY, today=TODAY))
+    # the range runs from PREV, so a pull request created the day before it is old
+    check("pull requests created on any day of the range are new, one from the day before it is not",
+          digest["repositories"][0]["sessions"][0]["pull_requests_new"], ["azure:3001", "azure:3002"])
 
 
 # ----- azure_organisation ---------------------------------------------------------
@@ -964,10 +1174,12 @@ def test_same_repository_github():
     check("no remote", cl.same_repository(key, {}, None), False)
 
 
-def test_created_on():
-    check("created that local day", cl.created_on({"created": _local(DAY, "23:59")}, DAY), True)
-    check("created another day", cl.created_on({"created": _local(PREV, "23:59")}, DAY), False)
-    check("no created", cl.created_on({"status": "unknown", "reason": "x"}, DAY), False)
+def test_created_in():
+    check("created on a local day in the set", cl.created_in({"created": _local(DAY, "23:59")}, {DAY}), True)
+    check("created on a day outside the set", cl.created_in({"created": _local(PREV, "23:59")}, {DAY}), False)
+    check("no created", cl.created_in({"status": "unknown", "reason": "x"}, {DAY}), False)
+    check("created on any day of a range", cl.created_in({"created": _local(PREV, "09:00")}, {PREV, DAY}), True)
+    check("created after the range", cl.created_in({"created": _local(TODAY, "09:00")}, {PREV, DAY}), False)
 
 
 # ----- live_state against a real repository -----------------------------------------
@@ -1060,8 +1272,8 @@ def test_identities():
 
 # ----- main: exit status and output ---------------------------------------------
 
-def _main(argv):
-    """Run main in-process from a non-repository folder with stdout and stderr captured.
+def _main(argv, today=None):
+    """Run main in-process from a non-repository folder with stdout and stderr captured, today passed through.
     stdout must be a real text wrapper, because main reconfigures it to UTF-8."""
     raw = io.BytesIO()
     out = io.TextIOWrapper(raw, encoding="cp1252")
@@ -1071,7 +1283,7 @@ def _main(argv):
     os.chdir(_tempdir())
     try:
         try:
-            code = cl.main(argv)
+            code = cl.main(argv, today)
         except SystemExit as exc:
             code = exc.code
         out.flush()
@@ -1083,10 +1295,11 @@ def _main(argv):
 
 def test_main_no_sessions():
     # CLAUDE_CONFIG_DIR holds no projects folder, so nothing is found
-    code, out, err = _main(["--day", DAY, "--no-live"])
+    code, out, err = _main(["--from", DAY, "--to", DAY, "--no-live"], today=datetime.date.fromisoformat(TODAY))
     check("EXIT_NO_SESSIONS", cl.EXIT_NO_SESSIONS, 3)
     check("no session exits 3", code, 3)
-    check("the digest is still printed", (json.loads(out)["day"], json.loads(out)["repositories"]), (DAY, []))
+    doc = json.loads(out)
+    check("the digest is still printed", ((doc["from"], doc["to"]), doc["repositories"]), ((DAY, DAY), []))
     check("stderr names the day", err, "no sessions on %s\n" % DAY)
 
     code, _, err = _main(["--no-live"])
@@ -1094,13 +1307,85 @@ def test_main_no_sessions():
     check("stderr says any day before today", err, "no sessions on any day before today\n")
 
 
-def test_main_day_format():
+def test_main_date_format():
     # fromisoformat accepts the basic and the week-date forms, and those must be refused too
+    today = datetime.date.fromisoformat(TODAY)
     for day in ("yesterday", "2026-13-01", "20260904", "2026-W36-5"):
-        code, out, err = _main(["--day", day, "--no-live"])
-        check("--day %s exits 2" % day, code, 2)
-        check("--day %s explains the format" % day, err.rstrip().endswith("--day must be YYYY-MM-DD"), True)
-        check("--day %s prints no digest" % day, out, "")
+        code, out, err = _main(["--from", day, "--no-live"], today=today)
+        check("--from %s exits 2" % day, code, 2)
+        check("--from %s explains the format" % day, err.rstrip().endswith("--from must be YYYY-MM-DD"), True)
+        check("--from %s prints no digest" % day, out, "")
+        # a valid --from leaves only --to to be refused
+        code, out, err = _main(["--from", DAY, "--to", day, "--no-live"], today=today)
+        check("--to %s exits 2" % day, code, 2)
+        check("--to %s explains the format" % day, err.rstrip().endswith("--to must be YYYY-MM-DD"), True)
+        check("--to %s prints no digest" % day, out, "")
+
+
+def test_main_range_validation():
+    today = datetime.date.fromisoformat(TODAY)
+    too_long = "a range holds at most 31 days, both ends included"
+    # 2026-08-07 to TODAY is 32 days, both ends included
+    refusals = ((["--to", DAY], "--to needs --from"),
+                (["--from", DAY, "--to", PREV], "--to must not be before --from"),
+                (["--from", DAY, "--to", "2026-09-08"], "--to must not be after today"),
+                (["--from", "2026-08-07", "--to", TODAY], too_long),
+                (["--from", "2026-08-07"], too_long))
+    for argv, reason in refusals:
+        label = " ".join(argv)
+        code, out, err = _main(argv + ["--no-live"], today=today)
+        check("%s exits 2" % label, code, 2)
+        check("%s says %s" % (label, reason), err.rstrip().endswith(reason), True)
+        check("%s prints no digest" % label, out, "")
+
+    code, out, err = _main(["--day", DAY, "--no-live"], today=today)
+    check("--day exits 2", code, 2)
+    check("--day is not a recognised argument", "unrecognized arguments: --day" in err, True)
+    check("--day prints no digest", out, "")
+
+    # CLAUDE_CONFIG_DIR holds no projects folder, so an accepted range exits 3 with its digest printed
+    for argv, want in ((["--from", "2026-08-08", "--to", TODAY], ("2026-08-08", TODAY)),
+                       (["--from", "2026-08-08"], ("2026-08-08", TODAY)),
+                       (["--from", DAY], (DAY, TODAY))):
+        label = " ".join(argv)
+        code, out, _ = _main(argv + ["--no-live"], today=today)
+        doc = json.loads(out) if out else {}
+        check("%s is accepted, its range ending as given or today" % label, (code, doc.get("from"), doc.get("to")),
+              (3,) + want)
+
+
+def test_main_default_day_today():
+    config = _tempdir()
+    # a work day after the injected today would be the default if main read the real date
+    projects = _projects({"proj/a.jsonl": [_user("thursday", day=PREV)], "proj/b.jsonl": [_user("friday")],
+                          "proj/c.jsonl": [_user("tuesday", day="2026-09-08")]})
+    os.rename(projects, os.path.join(config, "projects"))
+    os.environ["CLAUDE_CONFIG_DIR"] = config
+    try:
+        code, out, err = _main(["--no-live"], today=datetime.date.fromisoformat(TODAY))
+    finally:
+        os.environ["CLAUDE_CONFIG_DIR"] = CONFIG
+    doc = json.loads(out)
+    check("no flags is the latest work day before the injected today", (code, doc["from"], doc["to"]), (0, DAY, DAY))
+    check("only that day's session is kept", [s["id"] for g in doc["repositories"] for s in g["sessions"]], ["b"])
+    check("nothing on stderr", err, "")
+
+
+def test_main_progress_line():
+    today = datetime.date.fromisoformat(TODAY)
+    path = os.path.join(_tempdir(), "out", "digest.json")
+    for argv, said, want in ((["--from", DAY, "--to", DAY], DAY, (DAY, DAY)),
+                             (["--from", PREV, "--to", DAY], PREV + " to " + DAY, (PREV, DAY)),
+                             ([], "any day before today", (None, None))):
+        label = " ".join(argv) or "no flags"
+        code, out, err = _main(argv + ["--out", path, "--no-live"], today=today)
+        check("%s with --out exits 3" % label, code, 3)
+        check("%s: the progress line names %s" % (label, said),
+              out.startswith(said + ": 0 sessions in 0 folders, 0 headless runs left out, "), True)
+        check("%s: stderr names %s" % (label, said), err, "no sessions on %s\n" % said)
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+        check("%s: the digest is written to --out" % label, (doc["from"], doc["to"]), want)
 
 
 def test_non_ascii_on_cp1252_console():
@@ -1109,8 +1394,8 @@ def test_non_ascii_on_cp1252_console():
     projects = _projects({"proj/s1.jsonl": [_user(text)]})
     os.rename(projects, os.path.join(config, "projects"))
     env = dict(os.environ, PYTHONIOENCODING="cp1252", CLAUDE_CONFIG_DIR=config)
-    proc = subprocess.run([sys.executable, _SCRIPT, "--day", DAY, "--no-live"], capture_output=True, env=env,
-                          cwd=_tempdir(), timeout=60)
+    proc = subprocess.run([sys.executable, _SCRIPT, "--from", DAY, "--to", DAY, "--no-live"], capture_output=True,
+                          env=env, cwd=_tempdir(), timeout=60)
     check("subprocess exits 0", proc.returncode, 0)
     check("subprocess stderr empty", proc.stderr, b"")
     doc = json.loads(proc.stdout.decode("utf-8"))
@@ -1139,11 +1424,17 @@ _TESTS = (test_isolation, test_local_time, test_days_in, test_default_day, test_
           test_collect_default_day, test_collect_live_pull_requests_new,
           test_collect_default_day_work_days, test_collect_live_merged_by, test_collect_live_pull_requests_new_author,
           test_collect_live_pull_requests_new_no_identity, test_collect_output_shape,
-          test_azure_organisation, test_pull_request_state_azure, test_pull_request_state_github, test_created_on,
+          test_azure_organisation, test_pull_request_state_azure, test_pull_request_state_github, test_created_in,
           test_pull_request_state_azure_source_and_author, test_same_repository_azure, test_same_repository_github,
           test_live_state, test_live_state_not_a_repository, test_live_state_remote_and_email,
           test_live_state_unpushed_other_remote, test_identities,
-          test_main_no_sessions, test_main_day_format, test_non_ascii_on_cp1252_console,
+          test_main_no_sessions, test_main_date_format, test_non_ascii_on_cp1252_console,
+          test_span_days, test_read_session_days, test_read_session_across_days, test_subagent_usage_days,
+          test_read_session_remind_me_run, test_read_session_remind_me_run_ended_by_prompt,
+          test_read_session_remind_me_run_days,
+          test_collect_range, test_collect_earliest, test_collect_remind_me_run_dropped,
+          test_collect_live_pull_requests_new_range,
+          test_main_range_validation, test_main_default_day_today, test_main_progress_line,
           test_no_cli_escaped)
 
 

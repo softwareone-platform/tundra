@@ -1,4 +1,4 @@
-"""Collect one day of Claude Code sessions into a digest the model reads.
+"""Collect a day, or a range of days, of Claude Code sessions into a digest the model reads.
 
 The transcripts of a working day run to tens of megabytes, so the model never reads them.
 This script keeps only what a summary needs: who asked what and when, the questions a session left,
@@ -7,11 +7,12 @@ A transcript says what was pending when the session stopped, and the live state 
 because a pull request a session left in review is often merged the same afternoon.
 
 Usage:
-    python collect.py [--day YYYY-MM-DD] [--out digest.json] [--no-live]
+    python collect.py [--from YYYY-MM-DD [--to YYYY-MM-DD]] [--out digest.json] [--no-live]
 
-Without --day, the day is the most recent one before today with a prompt typed in an interactive session,
-so a Monday run reports the Friday before.
-Exit status 3 means no session was active that day.
+Without --from, the range is the one most recent day before today with a prompt typed in an interactive session,
+so a Monday run reports the Friday before. Without --to, the range ends today.
+A range holds at most 31 days, both ends included.
+Exit status 3 means no session was active in the range.
 """
 
 import argparse
@@ -28,6 +29,8 @@ import urllib.parse
 
 EXIT_OK = 0
 EXIT_NO_SESSIONS = 3
+# a month of sessions is the most one report is built to hold, and Claude Code keeps 30 days of transcripts by default
+MAX_DAYS = 31
 
 PROMPT_LIMIT = 600
 SUMMARY_HEAD = 1000
@@ -201,7 +204,7 @@ def add_usage(totals, seen, entry):
         bucket[field] += usage.get(field) or 0
 
 
-def subagent_usage(path, day, totals):
+def subagent_usage(path, days, totals):
     """Subagents spend on the session's behalf, so their usage counts toward it."""
     folder = os.path.join(path[:-len(".jsonl")], "subagents")
     for sub_path in glob.glob(os.path.join(folder, "*.jsonl")):
@@ -215,7 +218,7 @@ def subagent_usage(path, day, totals):
                 except ValueError:
                     continue
                 when = local_time(entry.get("timestamp", ""))
-                if when and when[0] == day:
+                if when and when[0] in days:
                     add_usage(totals, seen, entry)
 
 
@@ -229,8 +232,8 @@ def result_text(content):
     return json.dumps(content, ensure_ascii=False)
 
 
-def read_session(path, day):
-    """Everything the digest keeps from one transcript on one day, or None when it has nothing that day."""
+def read_session(path, days):
+    """Everything the digest keeps from one transcript on a set of days, or None when it has nothing on them."""
     session = {
         "id": os.path.basename(path)[:-len(".jsonl")],
         "cwd": None,
@@ -238,6 +241,7 @@ def read_session(path, day):
         "branches": [],
         "first": None,
         "last": None,
+        "days": [],
         "prompts": [],
         "questions": [],
         "pull_requests": [],
@@ -249,6 +253,7 @@ def read_session(path, day):
     branches = []
     prs = set()
     replies = []
+    in_run = False
     with open(path, encoding="utf-8", errors="replace") as handle:
         for line in handle:
             try:
@@ -260,19 +265,30 @@ def read_session(path, day):
                 # while a later cwd only follows the shell wherever a command moved it
                 session["cwd"] = entry.get("cwd")
             when = local_time(entry.get("timestamp", ""))
-            if not when or when[0] != day:
+            if not when or when[0] not in days:
                 continue
-            clock = when[1]
+            kind = entry.get("type")
+            prompt = typed_prompt(entry) if kind == "user" else None
+            if prompt and invokes_remind_me(prompt[1]):
+                in_run = True
+                continue
+            if in_run:
+                # a run of this skill is not work on the days it reports: its replies would become the session's last reply,
+                # and only the person typing again ends it, since a compaction summary is not the person
+                if not (prompt and prompt[0] in ("prompt", "command")):
+                    continue
+                in_run = False
+            clock = "%s %s" % when
             session["first"] = session["first"] or clock
             session["last"] = clock
+            if when[0] not in session["days"]:
+                session["days"].append(when[0])
             session["entrypoint"] = entry.get("entrypoint") or session["entrypoint"]
             branch = entry.get("gitBranch")
             if branch and branch != "HEAD" and branch not in branches:
                 branches.append(branch)
-            kind = entry.get("type")
             if kind == "user":
-                prompt = typed_prompt(entry)
-                if prompt and not invokes_remind_me(prompt[1]):
+                if prompt:
                     session["prompts"].append({"at": clock, "kind": prompt[0], "text": prompt[1]})
                 for block in blocks(entry.get("message") or {}):
                     if block.get("type") == "tool_result":
@@ -289,7 +305,7 @@ def read_session(path, day):
                         prs.update(pull_requests(command))
     if session["first"] is None:
         return None
-    subagent_usage(path, day, session["usage"])
+    subagent_usage(path, days, session["usage"])
     session["branches"] = branches
     session["pull_requests"] = sorted(prs)
     session["questions"] = [{"at": clock, "text": text[-QUESTION_TAIL:]} for clock, text in replies if is_question(text)]
@@ -378,9 +394,9 @@ def same_repository(key, state, remote):
     return bool(name) and path[-1] == name
 
 
-def created_on(state, day):
+def created_in(state, days):
     when = local_time(state.get("created") or "")
-    return bool(when) and when[0] == day
+    return bool(when) and when[0] in days
 
 
 def count(out):
@@ -454,22 +470,36 @@ def running_sessions():
     return found
 
 
-def collect(day, live=True, root=None, today=None):
+def span_days(first, last):
+    """Every local day from first to last, both included, as YYYY-MM-DD."""
+    start, end = datetime.date.fromisoformat(first), datetime.date.fromisoformat(last)
+    return {(start + datetime.timedelta(days=n)).isoformat() for n in range((end - start).days + 1)}
+
+
+def collect(first=None, last=None, live=True, root=None, today=None):
     root = root or os.path.join(config_dir(), "projects")
     paths = transcripts(root)
     today = today or datetime.date.today().isoformat()
-    day = day or default_day(paths, today)
-    digest = {"day": day,
+    if not first:
+        first = last = default_day(paths, today)
+    elif not last:
+        last = today
+    digest = {"from": first, "to": last, "earliest": None,
               "generated": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
               "left_out": {"headless": 0}, "repositories": [], "pull_requests": {}}
-    if not day:
+    if not first:
         return digest
+    days = span_days(first, last)
     running = running_sessions()
     groups = {}
     for path in paths:
-        if day not in days_in(path):
+        present = days_in(path)
+        if present:
+            # the oldest day any transcript still holds, which tells the skill whether the range starts before what was kept
+            digest["earliest"] = min(filter(None, [digest["earliest"], min(present)]))
+        if not present & days:
             continue
-        session = read_session(path, day)
+        session = read_session(path, days)
         if not session:
             continue
         if session["entrypoint"] == "sdk-cli":
@@ -515,34 +545,56 @@ def collect(day, live=True, root=None, today=None):
                     # so they would read as unpushed work
                     branch["merged_by"] = key
                     branch["unpushed"] = None
-        # a session also names old pull requests it labelled or compared against, so the new ones are those created that day,
-        # by the platform's own record, and by the person: a colleague's pull request named that day is not the person's work.
+        # a session also names old pull requests it labelled or compared against, so the new ones are those created in the range,
+        # by the platform's own record, and by the person: a colleague's pull request named then is not the person's work.
         # one session can name another session's new pull request, so this is no claim of which session opened it
         mine = set(digest["identities"])
         for group in digest["repositories"]:
             for session in group["sessions"]:
                 session["pull_requests_new"] = [
                     key for key in session["pull_requests"]
-                    if created_on(digest["pull_requests"].get(key, {}), day)
+                    if created_in(digest["pull_requests"].get(key, {}), days)
                     and (not mine or (digest["pull_requests"][key].get("author") or "").lower() in mine)]
     return digest
 
 
-def main(argv=None):
+def local_day(parser, flag, value):
+    # fromisoformat alone also accepts 20260904 and 2026-W36-5, which match no day key and read as an empty range
+    try:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            raise ValueError(value)
+        return datetime.date.fromisoformat(value)
+    except ValueError:
+        parser.error("%s must be YYYY-MM-DD" % flag)
+
+
+def describe(digest):
+    if not digest["from"]:
+        return "any day before today"
+    return digest["from"] if digest["from"] == digest["to"] else "%s to %s" % (digest["from"], digest["to"])
+
+
+def main(argv=None, today=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--day", help="local day to report, YYYY-MM-DD")
+    parser.add_argument("--from", dest="first", help="first local day of the range, YYYY-MM-DD")
+    parser.add_argument("--to", dest="last", help="last local day of the range, YYYY-MM-DD; today when left out")
     parser.add_argument("--out", help="write the digest here instead of stdout")
     parser.add_argument("--no-live", action="store_true", help="skip git and pull request lookups")
     args = parser.parse_args(argv)
-    if args.day:
-        # fromisoformat alone also accepts 20260904 and 2026-W36-5, which match no day key and read as an empty day
-        try:
-            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.day):
-                raise ValueError(args.day)
-            datetime.date.fromisoformat(args.day)
-        except ValueError:
-            parser.error("--day must be YYYY-MM-DD")
-    digest = collect(args.day, live=not args.no_live)
+    today = today or datetime.date.today()
+    if args.last and not args.first:
+        parser.error("--to needs --from")
+    if args.first:
+        first = local_day(parser, "--from", args.first)
+        last = local_day(parser, "--to", args.last) if args.last else today
+        if last < first:
+            parser.error("--to must not be before --from")
+        if last > today:
+            parser.error("--to must not be after today")
+        if (last - first).days + 1 > MAX_DAYS:
+            parser.error("a range holds at most %d days, both ends included" % MAX_DAYS)
+        args.first, args.last = first.isoformat(), last.isoformat()
+    digest = collect(args.first, args.last, live=not args.no_live, today=today.isoformat())
     text = json.dumps(digest, ensure_ascii=False, indent=1)
     if args.out:
         os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
@@ -550,12 +602,12 @@ def main(argv=None):
             handle.write(text)
         sessions = sum(len(group["sessions"]) for group in digest["repositories"])
         print("%s: %d sessions in %d folders, %d headless runs left out, %d bytes -> %s"
-              % (digest["day"], sessions, len(digest["repositories"]), digest["left_out"]["headless"], len(text.encode("utf-8")), args.out))
+              % (describe(digest), sessions, len(digest["repositories"]), digest["left_out"]["headless"], len(text.encode("utf-8")), args.out))
     else:
         sys.stdout.reconfigure(encoding="utf-8")
         print(text)
     if not digest["repositories"]:
-        print("no sessions on %s" % (digest["day"] or "any day before today"), file=sys.stderr)
+        print("no sessions on %s" % describe(digest), file=sys.stderr)
         return EXIT_NO_SESSIONS
     return EXIT_OK
 

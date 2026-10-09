@@ -12,6 +12,7 @@ Exit status 2 lists what in the report does not match the schema in report-schem
 """
 
 import argparse
+import datetime
 import html
 import json
 import os
@@ -36,7 +37,7 @@ PLACEHOLDERS = {"session_position": ("n", "total"), "duration": ("hours", "minut
 KINDS = ("decision", "action", "question")
 # each open kind has a twin among what happened: a decision is decided, an action done, a question found
 TWINS = (("decided", "decision", "c"), ("done", "action", "d"), ("found", "question", "f"))
-TOP_KEYS = ("day", "language", "headline", "labels", "sessions", "marks")
+TOP_KEYS = ("from", "to", "language", "headline", "labels", "sessions", "marks")
 SESSION_KEYS = ("topics", "open", "decided", "done", "found")
 ITEM_KEYS = ("kind", "text", "detail")
 # a kind with more open items than this shows its first ones and folds the rest behind a button
@@ -50,13 +51,14 @@ def problems_in(report, digest):
     if not isinstance(report, dict):
         return ["the report must be a JSON object"]
     found = []
-    for key in ("day", "language", "headline", "labels", "sessions"):
+    for key in ("from", "to", "language", "headline", "labels", "sessions"):
         if key not in report:
             found.append("missing top-level field: %s" % key)
     if found:
         return found
-    if report["day"] != digest.get("day"):
-        found.append("report day %s is not the digest's day %s" % (report["day"], digest.get("day")))
+    for key in ("from", "to"):
+        if report[key] != digest.get(key):
+            found.append("report %s %s is not the digest's %s %s" % (key, report[key], key, digest.get(key)))
     # the page escapes these as text, so anything but a string stops the render with a traceback rather than this list
     for key in ("language", "headline"):
         if not isinstance(report[key], str) or not report[key].strip():
@@ -259,16 +261,91 @@ def readable(stamp):
     return stamp[:16].replace("T", " ") if stamp else ""
 
 
-def minutes(clock):
-    hours, mins = clock.split(":")
+# one report covers either one day, drawn by the hour, or a range, drawn a column per day; page() and summary() set which
+VIEW = {"range": False, "axis": None}
+
+
+def single(digest):
+    return digest["from"] == digest["to"]
+
+
+def span_text(digest):
+    return digest["from"] if single(digest) else "%s – %s" % (digest["from"], digest["to"])
+
+
+def day_of(stamp):
+    return stamp.partition(" ")[0]
+
+
+def clock(stamp):
+    """Minutes past midnight of a YYYY-MM-DD HH:MM stamp."""
+    hours, mins = stamp.partition(" ")[2].split(":")
     return int(hours) * 60 + int(mins)
+
+
+def minutes(stamp):
+    """Minutes since a fixed start, so stamps on different days compare and subtract."""
+    return datetime.date.fromisoformat(day_of(stamp)).toordinal() * 1440 + clock(stamp)
+
+
+def shown(stamp):
+    """A stamp as the page prints it: the time alone on one day's page, the date as well on a range's."""
+    if VIEW["range"]:
+        return "%s %s" % (day_of(stamp)[5:], stamp.partition(" ")[2])
+    return stamp.partition(" ")[2]
+
+
+def stamp_html(stamp):
+    """On a range the page script rewrites each date in the report's language, so the date travels in a time element."""
+    if VIEW["range"]:
+        return '<time datetime="%s">%s</time>' % (e(stamp.replace(" ", "T"), quote=True), e(shown(stamp)))
+    return e(shown(stamp))
+
+
+def day_axis(digest):
+    """The range as columns: a day with a session is a column, and a run of days without one folds into a narrow gap."""
+    sessions = all_sessions(digest)
+    active = {day for session in sessions for day in session["days"]}
+    clocks = [clock(session[key]) for session in sessions for key in ("first", "last")]
+    low, high = (min(clocks) // 60) * 60, (max(clocks) // 60 + 1) * 60
+    columns = []
+    day, end = datetime.date.fromisoformat(digest["from"]), datetime.date.fromisoformat(digest["to"])
+    while day <= end:
+        if day.isoformat() in active:
+            columns.append({"day": day.isoformat(), "weight": 1.0, "monday": day.weekday() == 0})
+        elif columns and columns[-1].get("gap"):
+            columns[-1]["weight"] = 0.28
+        else:
+            columns.append({"gap": True, "weight": 0.28})
+        day += datetime.timedelta(days=1)
+    total, offset = sum(column["weight"] for column in columns), 0.0
+    for column in columns:
+        column["left"] = 100.0 * offset / total
+        column["width"] = 100.0 * column["weight"] / total
+        offset += column["weight"]
+    return {"columns": columns, "low": low, "high": max(high, low + 60), "index": {c["day"]: c for c in columns if not c.get("gap")}}
+
+
+def position(stamp):
+    """Where a stamp falls on the range's axis, in percent of the track."""
+    axis = VIEW["axis"]
+    column = axis["index"][day_of(stamp)]
+    # a gutter of about 3px on each side of a day, so a session ending late never touches one starting early the next day
+    pad = min(0.06, 3.0 / max(column["width"] * 10.0, 1.0))
+    share = (clock(stamp) - axis["low"]) / float(axis["high"] - axis["low"])
+    return column["left"] + column["width"] * (pad + (1 - 2 * pad) * share)
 
 
 def rows_for(group):
     """Sessions that ran at the same time get a row each, so no bar hides another."""
     rows = []
     for session in group["sessions"]:
-        spans = [(minutes(session["first"]), minutes(session["last"]))]
+        if VIEW["range"]:
+            # a bar is never narrower than its minimum, so on a month's axis two sessions an hour apart would overlap on the page
+            left = position(session["first"])
+            spans = [(left, max(position(session["last"]), left + 0.9) + 0.25)]
+        else:
+            spans = [(minutes(session["first"]), minutes(session["last"]))]
         for row in rows:
             if all(end < start2 or end2 < start for start, end in spans for start2, end2 in row["spans"]):
                 row["spans"].extend(spans)
@@ -287,6 +364,9 @@ def fill(text, **values):
 
 
 def length(session, labels):
+    if day_of(session["first"]) != day_of(session["last"]):
+        # a session resumed on a later day has no meaningful length, and its two dates already say how far it ran
+        return ""
     total = max(minutes(session["last"]) - minutes(session["first"]), 0)
     if total >= 60:
         return fill(labels["duration"], hours=total // 60, minutes=total % 60)
@@ -322,7 +402,7 @@ def tile(group):
 
 
 def session_name(report, session):
-    return '<span class="at">%s</span>%s' % (e(session["first"]), e(body_of(report, session)["topics"][0]))
+    return '<span class="at">%s</span>%s' % (stamp_html(session["first"]), e(body_of(report, session)["topics"][0]))
 
 
 def code_chips(text):
@@ -402,13 +482,26 @@ def lanes(pairs, entries, report, labels, linked):
 
 def timeline(groups, span, labels, title, report, selected=None):
     """The same timeline at every level: the axis always spans the whole day, so a bar keeps its place when the level changes."""
-    low, high = span
-    width = max(high - low, 60)
+    if VIEW["range"]:
+        axis = VIEW["axis"]
+        # the days with sessions are labelled, Mondays stand out, and the connector may drop down any column edge
+        ticks = "".join('<span class="dtick%s" style="left:%.3f%%"><time datetime="%s">%s</time></span>'
+                        % (" mon" if column["monday"] else "", column["left"] + column["width"] / 2, column["day"], column["day"][5:])
+                        for column in axis["columns"] if not column.get("gap"))
+        cuts = " ".join("%.3f" % column["left"] for column in axis["columns"][1:])
+        guides = "".join('<span class="gap" style="left:%.3f%%;width:%.3f%%"></span>' % (column["left"], column["width"]) if column.get("gap")
+                         else '<span class="dayline%s" style="left:%.3f%%"></span>' % (" mon" if column["monday"] else "", column["left"])
+                         for column in axis["columns"])
+        at, minimum, ticks_attrs = position, 0.9, ' class="ticks days" data-cuts="%s"' % cuts
+    else:
+        low, high = span
+        width = max(high - low, 60)
 
-    def at(clock):
-        return 100.0 * (minutes(clock) - low) / width
+        def at(stamp):
+            return 100.0 * (clock(stamp) - low) / width
 
-    ticks = "".join('<span style="left:%.2f%%">%02d:00</span>' % (100.0 * (hour * 60 - low) / width, hour) for hour in range(low // 60, high // 60 + 1))
+        ticks = "".join('<span style="left:%.2f%%">%02d:00</span>' % (100.0 * (hour * 60 - low) / width, hour) for hour in range(low // 60, high // 60 + 1))
+        guides, minimum, ticks_attrs = "", 0.8, ' class="ticks"'
     rows = []
     for group, slug in groups:
         lanes_of = rows_for(group)
@@ -421,13 +514,13 @@ def timeline(groups, span, labels, title, report, selected=None):
                 if selected:
                     state += " lit" if session["id"] == selected else " dim"
                 bars.append('<button type="button" class="bar%s" data-go="s-%s" aria-label="%s" style="left:%.2f%%;width:%.2f%%;top:%dpx;height:%dpx"></button>'
-                            % (state, e(session["id"], quote=True), e("%s %s-%s" % (name_of(group), session["first"], session["last"]), quote=True),
-                               at(session["first"]), max(at(session["last"]) - at(session["first"]), 0.8), 10 + number * (height + gap), height))
-        track = '<div class="track" style="height:%dpx">%s</div>' % (20 + len(lanes_of) * height + (len(lanes_of) - 1) * gap, "".join(bars))
+                            % (state, e(session["id"], quote=True), e("%s %s-%s" % (name_of(group), shown(session["first"]), shown(session["last"])), quote=True),
+                               at(session["first"]), max(at(session["last"]) - at(session["first"]), minimum), 10 + number * (height + gap), height))
+        track = '<div class="track" style="height:%dpx">%s%s</div>' % (20 + len(lanes_of) * height + (len(lanes_of) - 1) * gap, guides, "".join(bars))
         rows.append('<button type="button" class="tname" data-go="r-%s">%s<span class="nm">%s</span></button>%s'
                     % (e(slug, quote=True), tile(group), e(name_of(group)), track))
-    return ('<section class="card timeline" aria-label="%s"><h2>%s</h2><div class="grid"><span></span><div class="ticks">%s</div>%s</div></section>'
-            % (e(labels["timeline"], quote=True), title, ticks, "".join(rows)))
+    return ('<section class="card timeline" aria-label="%s"><h2>%s</h2><div class="grid"><span></span><div%s>%s</div>%s</div></section>'
+            % (e(labels["timeline"], quote=True), title, ticks_attrs, ticks, "".join(rows)))
 
 
 def trail(*parts):
@@ -456,17 +549,17 @@ def overview_panel(digest, report, labels, groups, span):
     mix_names = (("read", labels["cache_read"]), ("write", labels["cache_write"]), ("fresh", labels["uncached_input"]), ("out", labels["output"]))
     head = ('<section class="card head scope">%s<h1>%s</h1><p class="figures">%s</p>'
             '<div class="mix"><div class="mixbar" role="img" aria-label="%s">%s</div><div class="legend">%s</div></div></section>'
-            % (eyebrow("calendar", "%s · %s" % (labels["level_day"], digest["day"])), e(report["headline"]),
+            % (eyebrow("calendar", "%s · %s" % (labels["level_day"], span_text(digest))), e(report["headline"]),
                "".join("<span><b>%s</b> %s</span>" % (e(str(value)), e(label)) for value, label in stats), e(labels["token_mix"], quote=True),
                "".join('<span style="width:%.3f%%;background:var(--mix-%s)"></span>' % (100.0 * parts[key] / whole, key) for key, _ in mix_names),
                "".join('<span><i style="background:var(--mix-%s)"></i>%s %s (%.1f%%)</span>' % (key, e(name), compact(parts[key]), 100.0 * parts[key] / whole)
                        for key, name in mix_names)))
     pairs = [(item, group, session, number) for group, _ in groups for session in by_time(group) for number, item in enumerate(body_of(report, session).get("open", []))]
     cards = open_cards(pairs, labels, True, lambda group, session: '<div class="where">%s%s</div>' % (tile(group), e(name_of(group))))
-    first = min(session["first"] for session in all_sessions(digest))
-    last = max(session["last"] for session in all_sessions(digest))
+    first = stamp_html(min(session["first"] for session in all_sessions(digest)))
+    last = stamp_html(max(session["last"] for session in all_sessions(digest)))
     return (trail(("", e(labels["all_open"]))), head
-            + timeline(groups, span, labels, '%s <span>%s–%s</span>' % (e(labels["timeline"]), e(first), e(last)), report)
+            + timeline(groups, span, labels, '%s <span>%s–%s</span>' % (e(labels["timeline"]), first, last), report)
             + '<p class="lanetitle">%s</p><div class="cards">%s</div>' % (e(labels["still_open"]), "".join(cards))
             + folded_happened(groups, report, labels))
 
@@ -507,7 +600,7 @@ def repository_head(group, labels, running):
         if resumable:
             # the latest session that has stopped, since a running one is already open somewhere
             last = max(resumable, key=lambda session: session["last"])
-            buttons += button_link(deep_link(last["cwd"], "/resume " + last["id"]), icon("play") + e(labels["resume_last"]), "%s %s-%s" % (last["cwd"], last["first"], last["last"]))
+            buttons += button_link(deep_link(last["cwd"], "/resume " + last["id"]), icon("play") + e(labels["resume_last"]), "%s %s-%s" % (last["cwd"], shown(last["first"]), shown(last["last"])))
         buttons += (button_link(deep_link(group["path"]), icon("plus") + e(labels["new_session"]), group["path"], ghost=True)
                     + copy_button(terminal_command(group["path"]), labels["copy_terminal"], labels)
                     + copy_button(group["path"], labels["copy_path"], labels))
@@ -540,7 +633,7 @@ def session_panel(group, slug, session, report, labels, span):
     head = ('<section class="card head scope">%s<div class="top"><div class="grow"><h2>%s–%s <span class="span">%s</span></h2>'
             '<div class="path">%s %s · %s %s · %s</div></div><div class="buttons">%s</div></div><div class="topics">%s</div></section>'
             % (eyebrow("clock", "%s · %s" % (labels["level_session"], fill(labels["session_position"], n=sessions.index(session) + 1, total=len(sessions)))),
-               e(session["first"]), e(session["last"]), e(length(session, labels)), compact(usage["charged"]), e(labels["tokens"]),
+               stamp_html(session["first"]), stamp_html(session["last"]), e(length(session, labels)), compact(usage["charged"]), e(labels["tokens"]),
                compact(usage["output"]), e(labels["output"]), e(session["id"]), actions, "".join("<span>%s</span>" % e(topic) for topic in body["topics"])))
     pairs = [(item, group, session, number) for number, item in enumerate(body.get("open", []))]
     return (trail(("", e(labels["all_open"])), ("r-" + slug, tile(group) + e(name_of(group))), ("s-" + session["id"], session_name(report, session))),
@@ -563,12 +656,12 @@ def sidebar(digest, report, labels, groups):
             running = '<i class="dot" title="%s" aria-label="%s"></i>' % (e(labels["running"], quote=True), e(labels["running"], quote=True)) if session.get("running") else ""
             # the panel cuts the name to fit, so hovering shows it whole
             children.append('<button type="button" class="nav child" data-go="s-%s" title="%s">%s%s%s</button>'
-                            % (e(session["id"], quote=True), e("%s %s" % (session["first"], body_of(report, session)["topics"][0]), quote=True),
+                            % (e(session["id"], quote=True), e("%s %s" % (shown(session["first"]), body_of(report, session)["topics"][0]), quote=True),
                                '<span class="nm">%s</span>' % session_name(report, session),
                                running, '<span class="badge small">%s</span>' % badge(count) if count else ""))
         rows.append('<div class="children" data-children="%s" hidden>%s</div>' % (e(slug, quote=True), "".join(children)))
     return ('<aside class="card side"><div class="day">%s</div><div class="asof">%s %s</div>%s<hr><div class="sec">%s</div>%s</aside>'
-            % (e(digest["day"]), e(labels["as_of"]), e(readable(digest.get("generated"))), rows[0], e(labels["repository_list"]), "".join(rows[1:])))
+            % (e(span_text(digest)), e(labels["as_of"]), e(readable(digest.get("generated"))), rows[0], e(labels["repository_list"]), "".join(rows[1:])))
 
 
 def badge(number):
@@ -725,6 +818,12 @@ h1 { margin:0; font-size:24px; line-height:1.3; text-wrap:balance }
 .tname .nm { max-width:240px }
 .ticks { position:relative; height:18px }
 .ticks span { position:absolute; transform:translateX(-50%); font-size:11px; color:var(--faint); font-variant-numeric:tabular-nums }
+.ticks.days { height:30px }
+.ticks .dtick { text-align:center; line-height:1.2; white-space:nowrap }
+.ticks .dtick.mon { color:var(--ink); font-weight:600 }
+.track .dayline { position:absolute; top:0; bottom:0; border-left:1px solid var(--line) }
+.track .dayline.mon { border-left-color:color-mix(in srgb, var(--ink) 22%, transparent) }
+.track .gap { position:absolute; top:0; bottom:0; background:repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in srgb, var(--ink) 7%, transparent) 4px 5px) }
 .tname { display:flex; gap:8px; align-items:center; border:0; border-top:1px solid var(--line); background:none; padding:6px 12px 6px 0; text-align:left;
   font-weight:600; font-size:14px; cursor:pointer; min-width:0 }
 .tname .nm { white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
@@ -831,12 +930,15 @@ SCRIPT = """
         paths.push('M' + down + ' ' + top + ' V' + (rb.top - 4)); dots.push([down, top]);
       } else {
         // otherwise down at a half hour left of the bar, then across into its left end, through the dimmed bars before it
-        var ticks = panel.querySelector('.ticks').getBoundingClientRect(), hours = panel.querySelectorAll('.ticks span').length - 1, left = null, right = null;
-        for (var k = 0; k < hours; k++) {
-          var cx = Math.round(ticks.left + (k + 0.5) * ticks.width / hours);
+        var axis = panel.querySelector('.ticks'), ticks = axis.getBoundingClientRect(), hours = panel.querySelectorAll('.ticks span').length - 1, left = null, right = null;
+        // a range's columns differ in width, so the line drops down the edges between days rather than at half hours
+        var cuts = axis.getAttribute('data-cuts');
+        var candidates = cuts ? cuts.split(' ').map(function (p) { return Math.round(ticks.left + Number(p) * ticks.width / 100); })
+          : Array.apply(null, Array(Math.max(hours, 0))).map(function (_, k) { return Math.round(ticks.left + (k + 0.5) * ticks.width / hours); });
+        candidates.forEach(function (cx) {
           if (cx < rb.left - 6 && clear(cx)) { left = cx; }
           if (cx > rb.right + 6 && right === null && clear(cx)) { right = cx; }
-        }
+        });
         var mid = Math.round(rb.top + rb.height / 2), x;
         if (left !== null) {
           x = left; paths.push('M' + x + ' ' + top + ' V' + mid + ' H' + Math.round(rb.left - 4));
@@ -910,13 +1012,15 @@ def page(report, digest):
     # a copy of each repository carries its mark, so every place that draws it shows the same one
     groups = [(dict(group, mark=chosen.get(group["path"])), names[group["path"]]) for group in page_order]
     sessions = all_sessions(digest)
-    span = ((min(minutes(session["first"]) for session in sessions) // 60) * 60, (max(minutes(session["last"]) for session in sessions) // 60 + 1) * 60)
-    title = "remind-me %s" % report["day"]
+    VIEW["range"] = not single(digest)
+    VIEW["axis"] = day_axis(digest) if VIEW["range"] else None
+    span = ((min(clock(session["first"]) for session in sessions) // 60) * 60, (max(clock(session["last"]) for session in sessions) // 60 + 1) * 60)
+    title = "remind-me %s" % span_text(digest)
     built = [("", "day", "", title, overview_panel(digest, report, labels, groups, span))]
     for group, slug in groups:
         built.append(("r-" + slug, "repo", slug, "%s · %s" % (name_of(group), title), repository_panel(group, slug, report, labels, span)))
         for session in by_time(group):
-            built.append(("s-" + session["id"], "session", slug, "%s %s · %s" % (name_of(group), session["first"], title),
+            built.append(("s-" + session["id"], "session", slug, "%s %s · %s" % (name_of(group), shown(session["first"]), title),
                           session_panel(group, slug, session, report, labels, span)))
     panels = "".join('<section class="panel" id="p-%s" data-key="%s" data-level="%s" data-repo="%s" data-title="%s"%s>%s</section>'
                      % (e(key, quote=True), e(key, quote=True), level, e(slug, quote=True), e(name, quote=True), "" if not key else " hidden", body)
@@ -937,15 +1041,16 @@ def summary(report, digest, out):
     """The Markdown the session shows: no tables, because the terminal prints a <br> in a cell literally."""
     labels = report["labels"]
     numbers = figures(digest)
+    VIEW["range"] = not single(digest)
     lines = ["**%s**" % report["headline"], "",
-             "%s · %d %s · %d %s · %s %s" % (report["day"], numbers["sessions"], labels["sessions"], numbers["repositories"],
+             "%s · %d %s · %d %s · %s %s" % (span_text(digest), numbers["sessions"], labels["sessions"], numbers["repositories"],
                                            labels["repositories"], compact(numbers["tokens"]["charged"]), labels["tokens"])]
     for group in ordered(digest, report):
         lines += ["", "### %s" % name_of(group)]
         for session in group["sessions"]:
             body = body_of(report, session)
             running = " (%s)" % labels["running"] if session.get("running") else ""
-            lines.append("- **%s–%s**%s %s" % (session["first"], session["last"], running, " / ".join(body["topics"])))
+            lines.append("- **%s–%s**%s %s" % (shown(session["first"]), shown(session["last"]), running, " / ".join(body["topics"])))
             for item in body.get("open", []):
                 lines.append("  - %s: %s" % (labels[item["kind"]], item["text"]))
     lines += ["", pathlib.Path(out).resolve().as_uri(), "", "_%s_" % labels["language_hint"]]

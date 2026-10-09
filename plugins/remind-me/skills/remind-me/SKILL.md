@@ -22,16 +22,16 @@ The person ran several sessions, usually one per repository, and has lost track 
 
 Take two things from the arguments, in the person's own words:
 
-- **The day.** "yesterday", "last Friday" or a date, turned into `YYYY-MM-DD` from this machine's local date, which the collector buckets by too: for a relative day, run `date` first and count from the date it prints, since a session that ran past midnight still carries the day it started. With none, leave it out: the collector picks the most recent day before today with a prompt typed in an interactive session, so a Monday run reports Friday, and a day of only `claude -p` runs is skipped. The report covers one day: when the request names a range, such as "last week", say so and ask which day to report.
+- **The day.** "yesterday", "last Friday" or a date, turned into `YYYY-MM-DD` from this machine's local date, which the collector buckets by too: for a relative day, run `date` first and count from the date it prints, since a session that ran past midnight still carries the day it started. With none, leave it out: the collector picks the most recent day before today with a prompt typed in an interactive session, so a Monday run reports Friday, and a day of only `claude -p` runs is skipped. When the request names a range of days by its dates, take its first and last day; a range holds at most 31 days, both ends included.
 - **The language** of the report. Without one in the request, follow a standing instruction in the person's `CLAUDE.md` files about the language of reports or explanations; without that, it is the language the person has been using with you. The renderer ends the summary with the `language_hint` label, so the hint that a language can be named in the request comes from the report.
 
 ## 2. Collect
 
 ```
-python "${CLAUDE_SKILL_DIR}/scripts/collect.py" [--day YYYY-MM-DD] --out "${CLAUDE_PLUGIN_DATA}/digests/${CLAUDE_SESSION_ID}.json"
+python "${CLAUDE_SKILL_DIR}/scripts/collect.py" [--from YYYY-MM-DD --to YYYY-MM-DD] --out "${CLAUDE_PLUGIN_DATA}/digests/${CLAUDE_SESSION_ID}.json"
 ```
 
-The digest, and the report written from it, are named after this session, so two sessions running the skill at once never overwrite each other's. The collector reads `~/.claude/projects`, keeps the day's main sessions, leaves out `claude -p` runs, groups the sessions by repository, and looks up the live state of each repository and of every pull request it recognises in them; step 4 says what to do with one it does not. It prints the day it chose and the digest's size. Exit status 3 means no session was found that day: say which day was looked at and stop. When no day was found at all, or that day lies more than a week back, add that Claude Code deletes transcripts after `cleanupPeriodDays`, which defaults to 30 days and may be set lower, so nothing may be left to read. Any other non-zero exit, a traceback or a timeout means there is no digest to judge: show the last lines it printed and stop, without writing a report from memory.
+The digest, and the report written from it, are named after this session, so two sessions running the skill at once never overwrite each other's. The collector reads `~/.claude/projects`, keeps the day's main sessions, leaves out `claude -p` runs, groups the sessions by repository, and looks up the live state of each repository and of every pull request it recognises in them; step 4 says what to do with one it does not. It prints the day or the range it chose and the digest's size. For one day, `--from` and `--to` are that same day. Exit status 3 means no session was found that day: say which day was looked at and stop. When no day was found at all, or that day lies more than a week back, add that Claude Code deletes transcripts after `cleanupPeriodDays`, which defaults to 30 days and may be set lower, so nothing may be left to read. Any other non-zero exit, a traceback or a timeout means there is no digest to judge: show the last lines it printed and stop, without writing a report from memory.
 
 A session that is still running is included, and so is today's session when it was active on that day, since a session resumed today in the same repository holds yesterday's work. The request that started this skill is left out.
 
@@ -71,7 +71,7 @@ The page shows each repository's uncommitted and unpushed counts and marks runni
 
 Write one JSON document, following [`report-schema.md`](report-schema.md), in the report's language. Read the schema before you write it. It holds only the judgement: the headline, the labels, an emoji per repository in `marks`, and each session's topics, what it decided, did and found, and its open items. The renderer takes every figure, state, command and time from the digest, so none of them goes in the report. The headline says in words what matters most about the day, such as what is still waiting on the person, and carries no counts: the figures sit right under it and come from the digest.
 
-Write it to `${CLAUDE_PLUGIN_DATA}/reports/<day>-${CLAUDE_SESSION_ID}.json`, replacing an earlier report from this session. Then render it:
+Write it to `${CLAUDE_PLUGIN_DATA}/reports/<day>-${CLAUDE_SESSION_ID}.json` for one day, or `${CLAUDE_PLUGIN_DATA}/reports/<from>_<to>-${CLAUDE_SESSION_ID}.json` for a range, replacing an earlier report from this session. Then render it:
 
 ```
 python "${CLAUDE_SKILL_DIR}/scripts/render.py" <report.json> --digest "${CLAUDE_PLUGIN_DATA}/digests/${CLAUDE_SESSION_ID}.json" --out <same path, .html> --open
