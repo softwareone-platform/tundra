@@ -1,4 +1,4 @@
-<!-- translated from README.md, source sha256 460476c48ef976d864ce530969d13225744574e732a52dc0ded90cf7fc52d822; see the root CLAUDE.md "Translations of a plugin's README" before editing -->
+<!-- translated from README.md, source sha256 9cb3de0eb9895cf1ffe81b685d90f9351e929de7fafa4141e98c912d1989b5e8; see the root CLAUDE.md "Translations of a plugin's README" before editing -->
 # remind-me
 
 [English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
@@ -50,8 +50,8 @@ flowchart TB
         render --> page["session 里的摘要<br>以及 plugin 文件夹里的 HTML 页面"]
         render -. 随后删除 .-> digest
     end
-    subgraph provider["Anthropic 或你的云服务提供商"]
-        model["模型<br>主题、决定、完成和查明的事，以及待处理的事"]
+    subgraph provider["LLM"]
+        model["Anthropic 或你的云服务提供商<br>读取摘录，判断主题、决定、完成、查明和待处理的事"]
     end
     subgraph host["Azure DevOps 或 GitHub"]
         remote["每个提到的 pull request 的状态<br>通过你自己的 az 或 gh 登录"]
