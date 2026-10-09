@@ -662,7 +662,7 @@ code { font-family:var(--mono); font-size:.86em; padding:1px 5px; border-radius:
 .nav .nm { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
 .nav.child .nm { display:block }
 .nav .i { width:20px; height:20px; color:var(--accent) }
-.nav.on { color:var(--lv); background:color-mix(in srgb, var(--lv) 15%, transparent); box-shadow:inset 3px 0 0 var(--lv) }
+.nav.on { color:var(--lv); background:color-mix(in srgb, var(--lv) 15%, transparent); box-shadow:inset -3px 0 0 var(--lv) }
 .nav.parent { color:var(--lv-repo) }
 .children { display:grid; gap:1px; min-width:0; margin:0 0 4px 22px; padding-left:10px; border-left:1px solid var(--line) }
 .nav.child { min-width:0; padding:5px 10px; font-size:13px; font-weight:400; color:var(--soft) }
@@ -813,7 +813,7 @@ SCRIPT = """
     var head = panel && panel.querySelector('.scope');
     if (!nav || !head) { return; }
     var sx = window.scrollX, sy = window.scrollY, rn = nav.getBoundingClientRect(), rh = head.getBoundingClientRect();
-    var x1 = rn.right + 10, y1 = rn.top + rn.height / 2, x2 = rh.left, y2 = rh.top + Math.min(rh.height / 2, 44), mx = Math.round((x1 + x2) / 2);
+    var x1 = rn.right, y1 = rn.top + rn.height / 2, x2 = rh.left, y2 = rh.top + Math.min(rh.height / 2, 44), mx = Math.round((x1 + x2) / 2);
     var paths = ['M' + x1 + ' ' + y1 + ' H' + mx + ' V' + y2 + ' H' + x2], dots = [[x1, y1], [x2, y2]];
     var bar = panel.querySelector('.bar.lit');
     if (bar) {
@@ -831,10 +831,21 @@ SCRIPT = """
         paths.push('M' + down + ' ' + top + ' V' + (rb.top - 4)); dots.push([down, top]);
       } else {
         // otherwise down at a half hour left of the bar, then across into its left end, through the dimmed bars before it
-        var ticks = panel.querySelector('.ticks').getBoundingClientRect(), hours = panel.querySelectorAll('.ticks span').length - 1, side = null;
-        for (var k = 0; k < hours; k++) { var cx = Math.round(ticks.left + (k + 0.5) * ticks.width / hours); if (cx < rb.left - 6 && clear(cx)) { side = cx; } }
-        var x = side === null ? Math.round(rb.left + rb.width / 2) : side, mid = Math.round(rb.top + rb.height / 2);
-        paths.push(side === null ? 'M' + x + ' ' + top + ' V' + (rb.top - 4) : 'M' + x + ' ' + top + ' V' + mid + ' H' + Math.round(rb.left - 4));
+        var ticks = panel.querySelector('.ticks').getBoundingClientRect(), hours = panel.querySelectorAll('.ticks span').length - 1, left = null, right = null;
+        for (var k = 0; k < hours; k++) {
+          var cx = Math.round(ticks.left + (k + 0.5) * ticks.width / hours);
+          if (cx < rb.left - 6 && clear(cx)) { left = cx; }
+          if (cx > rb.right + 6 && right === null && clear(cx)) { right = cx; }
+        }
+        var mid = Math.round(rb.top + rb.height / 2), x;
+        if (left !== null) {
+          x = left; paths.push('M' + x + ' ' + top + ' V' + mid + ' H' + Math.round(rb.left - 4));
+        } else if (right !== null) {
+          // a bar near the start of the day has the title over every half hour left of it, so the line comes in from the right instead
+          x = right; paths.push('M' + x + ' ' + top + ' V' + mid + ' H' + Math.round(rb.right + 4));
+        } else {
+          x = Math.round(rb.left + rb.width / 2); paths.push('M' + x + ' ' + top + ' V' + (rb.top - 4));
+        }
         dots.push([x, top]);
       }
     }
