@@ -1,9 +1,9 @@
-<!-- translated from README.md, source sha256 dd05af1a133f116cf034dbad7d7f66d5fd60972e60bc7af8d207405b815f2a08; see the root CLAUDE.md "Translations of a plugin's README" before editing -->
+<!-- translated from README.md, source sha256 f672103aa8f738b0f79a7089ed8b66ba71244f63b778ddd404e84f4af238bf24; see the root CLAUDE.md "Translations of a plugin's README" before editing -->
 # remind-me
 
 [English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
 
-你在某一天运行过的 Claude Code session 还留下哪些没做完的事，按 repository 分组，逐一对照它们提到的 pull request 和 branch 的实时状态，并提供回到每个 session 自己文件夹的入口。
+你在某一天或一段日期里运行过的 Claude Code session 还留下哪些没做完的事，按 repository 分组，逐一对照它们提到的 pull request 和 branch 的实时状态，并提供回到每个 session 自己文件夹的入口。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/overview-dark.zh-CN.jpg">
@@ -23,9 +23,9 @@
 
 ## 使用方法
 
-用自己的话问，例如“我昨天留下了什么没做完？”，或运行 `/remind-me:remind-me`，可以加上日期和语言：`/remind-me:remind-me last Friday, in German`。没有指定日期时，它会报告今天之前、最近一个你在交互式 session 里输入过 prompt 的日子，所以周一运行会报告周五，只有 `claude -p` 运行记录的日子会被跳过。
+用自己的话问，例如“我昨天留下了什么没做完？”，或运行 `/remind-me:remind-me`，可以加上日期或一段范围，以及语言：`/remind-me:remind-me last Friday, in German` 或 `/remind-me:remind-me this week`。范围最多 31 天，说得模糊时每次都用同一种算法：“这周”是周一到今天，“上周”是上周一到上周日。没有指定日期时，它会报告今天之前、最近一个你在交互式 session 里输入过 prompt 的日子，所以周一运行会报告周五，只有 `claude -p` 运行记录的日子会被跳过。
 
-你会在 session 里得到一份列出仍待处理事项的摘要，以及一个在浏览器中打开的 HTML 页面：所有 repository 当天的数字（包括 token 用量）、按 repository 排列的每个 session 时间线，以及所有还没做完的事。
+你会在 session 里得到一份列出仍待处理事项的摘要，以及一个在浏览器中打开的 HTML 页面：所有 repository 的数字（包括 token 用量）、按 repository 排列的每个 session 时间线，以及所有还没做完的事，最新的在上。报告一段范围时，时间线一天一栏，概览列出每个 repository 最新的几项并链接到其余的，每张卡片都能放大显示全部。
 
 在侧边栏或时间线上选择一个 repository 或 session，就能看到它的主题、留下的待处理事项、它决定了什么、做了什么、查明了什么，以及带你回到它自己文件夹的按钮。仍在运行的 session 会被标记出来，而且不能从页面恢复，因为那样会把它打开两次。
 
@@ -34,7 +34,7 @@
   <img alt="虚构一天里的一个 session：带有恢复按钮的标题区、它在 repository 时间线上被标出的横条，以及它留下的待处理事项和它决定、做了、查明的事" src="docs/session-light.zh-CN.jpg">
 </picture>
 
-页面呈现的是那一天当时的样子，只根据当天的 prompt 判断；pull request 和 branch 则显示现在的状态，因为 session 留在审查中的 pull request，常常当天下午就合并了。
+页面呈现的是那几天当时的样子，只根据那几天的 prompt 判断；报告一段范围时，只呈现每件事最后的结果，放在了结它的 session 下面；pull request 和 branch 则显示现在的状态，因为 session 留在审查中的 pull request，常常当天下午就合并了。
 
 ## 它读取什么、发送什么
 
@@ -43,17 +43,17 @@ flowchart TB
     transcripts["Transcript<br>~/.claude/projects"] --> collect
     git["每个 repository 里的 git<br>branch、未 commit 和未 push 的工作"] --> collect
     remote["Azure DevOps 或 GitHub<br>每个提到的 pull request 的状态"] --> collect
-    collect["collect.py<br>保留当天的 prompt，排除 claude -p 运行记录"] --> digest["Digest<br>当天 transcript 的摘录"]
-    digest -- 摘录 --> model["LLM<br>判断主题、决定、完成、查明和待处理的事"]
+    collect["collect.py<br>保留那几天的 prompt，排除 claude -p 运行记录"] --> digest["Digest<br>那几天 transcript 的摘录"]
+    digest -- 摘录 --> model["LLM，范围长时每个 repository 一个 reader<br>判断主题、决定、完成、查明和待处理的事"]
     model -- 报告 --> render["render.py<br>生成摘要和页面"]
     digest -- 所有数字、时间和状态 --> render
     render --> page["session 里的摘要<br>以及 plugin 文件夹里的 HTML 页面"]
     render -. 随后删除 .-> digest
 ```
 
-它读取 Claude Code 保存在这台机器 `~/.claude/projects` 下的 transcript，覆盖你当天工作过的每个 repository。它会在这些 repository 里运行 `git`，并用 `az` 或 `gh` 查询 session 提到的 pull request。没有 `az` 或 `gh`，或者没有登录时，pull request 的状态会标记为未查询，绝不会当成待审。
+它读取 Claude Code 保存在这台机器 `~/.claude/projects` 下的 transcript，覆盖你那几天工作过的每个 repository。它会在这些 repository 里运行 `git`，并用 `az` 或 `gh` 查询 session 提到的 pull request。没有 `az` 或 `gh`，或者没有登录时，pull request 的状态会标记为未查询，绝不会当成待审。
 
-你的 session 所用的模型会读取 digest，所以当天 transcript 的摘录会发送到那个模型运行的地方，就像你让 Claude 读取一个文件一样。查询会通过你自己的 CLI 登录，向 Azure DevOps 或 GitHub 询问每个提到的 pull request 的状态，以及你登录的账号，以此区分哪些新的 pull request 是你创建的、哪些是同事创建的。除此之外没有任何内容离开这台机器，页面也不会从网络加载任何内容。
+你的 session 所用的模型会读取 digest，所以那几天 transcript 的摘录会发送到那个模型运行的地方，就像你让 Claude 读取一个文件一样。查询会通过你自己的 CLI 登录，向 Azure DevOps 或 GitHub 询问每个提到的 pull request 的状态，以及你登录的账号，以此区分哪些新的 pull request 是你创建的、哪些是同事创建的。除此之外没有任何内容离开这台机器，页面也不会从网络加载任何内容。
 
 报告和页面写在 plugin 自己的文件夹 `~/.claude/plugins/data/remind-me-tundra/reports/`，digest 在报告生成后就会删除。报告记录的是工作本身，而不是工作接触过的数据，所以凭据、人名、客户和账号的标识符，以及从 production 系统读取到的任何内容都不会写进去。
 

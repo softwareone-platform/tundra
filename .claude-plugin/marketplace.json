@@ -57,7 +57,7 @@
     },
     {
       "name": "remind-me",
-      "description": "What you left open in the Claude Code sessions you ran on a given day, grouped by repository and checked against the live state of every pull request and branch, with a way back into each session",
+      "description": "What you left open in the Claude Code sessions you ran on a given day or over a range of days, grouped by repository and checked against the live state of every pull request and branch, with a way back into each session",
       "source": "./plugins/remind-me"
     }
   ]
