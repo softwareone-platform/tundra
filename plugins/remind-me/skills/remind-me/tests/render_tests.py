@@ -1150,10 +1150,14 @@ def _cards(text):
     return re.findall(r'<section class="card col ([^"]+)"(?: data-kind="[^"]*" data-count="\d+")?>(.*?)</section>', text)
 
 
+def _row_start(panel, title):
+    """Where the folded row under one title opens, at its details tag."""
+    return panel.rindex('<details class="folded"', 0, panel.index('<span class="chev">%s</span>%s' % (render.icon("chevron"), title)))
+
+
 def _lanes_of(panel):
-    """The Still-open and the What-happened lane of a repository or session panel."""
-    start = panel.index('<p class="lanetitle">[still_open]</p>')
-    split = panel.index('<p class="lanetitle">[what_happened]</p>')
+    """The Still-open and the What-happened row of a repository or session panel, each from its details tag."""
+    start, split = _row_start(panel, "[still_open]"), _row_start(panel, "[what_happened]")
     return panel[start:split], panel[split:]
 
 
@@ -1176,7 +1180,8 @@ def test_happened_cards():
 
 
 def _counts(overview):
-    summary = re.search(r'<span class="counts">(.*?)</span></summary>', overview).group(1)
+    """The counts beside the overview's What-happened title."""
+    summary = re.search(r'<span class="counts">(.*?)</span></summary>', overview[_row_start(overview, "[what_happened]"):]).group(1)
     return re.findall(r'<span class="kind (\w+)">%s\[(\w+)\] (\d+)</span>' % _ICON, summary)
 
 
@@ -1184,7 +1189,8 @@ def test_folded_overview_lane():
     digest = _digest([_group_of("repo-a", [_session("s1")]), _group_of("repo-b", [_session("s2", cwd=_folder("repo-b"))])])
     page = render.page(_report({"s1": _body(), "s2": dict(_body(), found=["the cause"])}), digest)
     overview = _panel(page, "p-")
-    check("one line in one session folds the lane in", overview.count('<details class="folded">'), 1)
+    # every row folds, and only What happened starts folded, so the one details tag without open is that row
+    check("the overview starts with one row folded, what happened", overview.count('<details class="folded">'), 1)
     check("its counts show only the kind with lines", _counts(overview), [("question", "found", "1")])
     folded = overview[overview.index('<details class="folded">'):]
     check("its cards are the lists with lines", [cls for cls, _ in _cards(folded)], ["twin question"])
@@ -1244,9 +1250,13 @@ def test_lanes_below_the_overview():
         check("on %s only the list with lines gets a card" % panel_id, [cls for cls, _ in _cards(happened)], ["twin action"])
         check("on %s no card clamps" % panel_id, "clamp" in panel, False)
     still, happened = _lanes_of(_panel(page, "p-s-s2"))
-    check("an empty Still-open lane says nothing is open", re.fullmatch(r'<p class="lanetitle">\[still_open\]</p>' + _empty("nothing_open"), still) is not None, True)
-    check("an empty What-happened lane says nothing happened",
-          re.match(r'<p class="lanetitle">\[what_happened\]</p>' + _empty("nothing_happened"), happened) is not None, True)
+    row = (r'<details class="folded" open><summary class="lanetitle"><span class="chev">' + re.escape(render.icon("chevron"))
+           + r'</span>\[%s\]<span class="counts"></span></summary>%s</details>')
+    check("an empty Still-open row is open, counts nothing and says nothing is open",
+          re.fullmatch(row % ("still_open", _empty("nothing_open")), still) is not None, True)
+    # the session panel's closing tag follows the last row, so only its start is matched
+    check("an empty What-happened row is open, counts nothing and says nothing happened",
+          re.match(row % ("what_happened", _empty("nothing_happened")), happened) is not None, True)
 
 
 def test_levels_fold_past_limit():
@@ -1295,6 +1305,145 @@ def test_folded_links_land_on_folded_items():
         check("%s sits in one card" % anchor, len(holders), 1)
         check("%s shares its card with a maximise button of the card's kind" % anchor,
               [content.count('<button type="button" class="maxbtn grow" data-max-kind="%s"' % kind) for kind, content in holders], [1])
+
+
+# ----- folded rows ---------------------------------------------------------------
+
+def test_folded():
+    chev = render.icon("chevron")
+    # by hand: the markup ruled on 2026-10-12, the title escaped as html.escape does, quotes included
+    check("an open row is details open, the chevron, the escaped title, the counts, then the content",
+          render.folded('a < b & "c"', "<C>", "<K>"),
+          '<details class="folded" open><summary class="lanetitle"><span class="chev">' + chev
+          + '</span>a &lt; b &amp; &quot;c&quot;<span class="counts"><K></span></summary><C></details>')
+    check("a folded row carries no open attribute", render.folded("t", "<C>", "<K>", open_=False),
+          '<details class="folded"><summary class="lanetitle"><span class="chev">' + chev
+          + '</span>t<span class="counts"><K></span></summary><C></details>')
+    check("by default a row is open and counts nothing", render.folded("t", "<C>"),
+          '<details class="folded" open><summary class="lanetitle"><span class="chev">' + chev
+          + '</span>t<span class="counts"></span></summary><C></details>')
+
+
+def test_lane():
+    head = ('<details class="folded" open><summary class="lanetitle"><span class="chev">' + render.icon("chevron")
+            + '</span>%s<span class="counts">%s</span></summary>')
+    check("a lane's cards sit in one cards block under its row", render.lane("t", ["<A>", "<B>"], "none", "<K>"),
+          head % ("t", "<K>") + '<div class="cards"><A><B></div></details>')
+    check("a lane with no cards shows one empty card with the action icon and the escaped empty label",
+          render.lane("t", [], 'none < & "x"'),
+          head % ("t", "") + '<div class="card empty">' + render.icon("action") + 'none &lt; &amp; &quot;x&quot;</div></details>')
+    check("a lane can start folded", render.lane("t", ["<A>"], "none", open_=False).startswith('<details class="folded"><summary'), True)
+
+
+def _rows(panel):
+    """Each folded row of a panel as (title, starts open), in page order."""
+    found = re.findall(r'<details class="folded"( open)?><summary class="lanetitle"><span class="chev">%s</span>([^<]*)<span class="counts">'
+                       % re.escape(render.icon("chevron")), panel)
+    return [(title, bool(is_open)) for is_open, title in found]
+
+
+def test_rows_open_by_level():
+    digest = _digest([_group_of("repo-a", [_session("s1")]), _group_of("repo-b", [_session("s2", cwd=_folder("repo-b"))])])
+    page = render.page(_report({"s1": _body(open_items=[_item("action", "open one")], done=["done one"]), "s2": _body()}), digest)
+    check("repo-a's panel has items in both rows", _panel(page, "p-r-repo-a").count('<div class="card empty">'), 0)
+    check("repo-b's panel has both rows empty", _panel(page, "p-r-repo-b").count('<div class="card empty">'), 2)
+    both = [("[still_open]", True), ("[what_happened]", True)]
+    want = {"p-": [("[still_open]", True), ("[what_happened]", False)], "p-r-repo-a": both, "p-s-s1": both, "p-r-repo-b": both, "p-s-s2": both}
+    check("the overview opens still open and folds what happened, and every row below opens, with items or empty",
+          {panel_id: _rows(_panel(page, panel_id)) for panel_id in want}, want)
+
+
+def _counts_inside(summary):
+    """What the counts span of one row's summary holds."""
+    return summary.partition('<span class="counts">')[2][:-len("</span>")]
+
+
+def test_row_summaries_carry_one_chevron():
+    s1 = dict(_body(open_items=[_item("decision", "d"), _item("action", "a"), _item("question", "q")], done=["done"]), decided=["c"], found=["f"])
+    digest = _digest([_group_of("repo-a", [_session("s1"), _session("s2", first="11:00", last="12:00")])])
+    page = render.page(_report({"s1": s1, "s2": _body()}), digest)
+    chev = render.icon("chevron")
+    # the trail joins its steps with the same chevron, so only the rows' summaries are searched
+    summaries = re.findall(r'<summary class="lanetitle">(.*?)</summary>', _markup(page))
+    # by hand: two rows on each of the overview, repo-a's panel and its two sessions' panels
+    check("every panel's rows carry a summary", len(summaries), 8)
+    check("each summary carries the chevron once", [summary.count(chev) for summary in summaries], [1] * 8)
+    check("each summary opens with the chevron in its own span",
+          [summary.startswith('<span class="chev">%s</span>' % chev) for summary in summaries], [True] * 8)
+    counts = [_counts_inside(summary) for summary in summaries]
+    check("each counts span holds only kind spans", [re.sub(r'<span class="kind \w+">%s[^<]*</span>' % _ICON, "", part) for part in counts], [""] * 8)
+    pieces = [piece for part in counts for piece in re.findall(r'<span class="kind (\w+)">(%s)' % _ICON, part)]
+    check("the counts draw icons at all", len(pieces) > 0, True)
+    check("each kind span draws its own kind's icon",
+          [kind for kind, svg in pieces if kind not in render.KINDS or svg != render.icon(kind)], [])
+
+
+def test_kind_counts():
+    # by hand: one span per total with lines, in the order given, each label escaped
+    check("a span per total with lines, the zero total left out",
+          render.kind_counts([("decision", "D <&>", 2), ("action", "A", 0), ("question", "Q", 1)]),
+          '<span class="kind decision">' + render.icon("decision") + 'D &lt;&amp;&gt; 2</span>'
+          + '<span class="kind question">' + render.icon("question") + 'Q 1</span>')
+
+
+def _row_summary(panel, title):
+    start = _row_start(panel, title)
+    return panel[start:panel.index("</summary>", start)]
+
+
+def _row_counts(panel, title):
+    """The counts beside one row's title, as (kind, icon, label, number) in page order."""
+    return re.findall(r'<span class="kind (\w+)">(%s)\[(\w+)\] (\d+)</span>' % _ICON, _row_summary(panel, title))
+
+
+def test_open_counts_by_level():
+    # the question is listed first, so decision before question can only come from KINDS
+    items = [_item("question", "q"), _item("decision", "d1"), _item("decision", "d2")]
+    page = render.page(_report({"s1": _body(open_items=items)}), _digest())
+    want = [("decision", render.icon("decision"), "decision", "2"), ("question", render.icon("question"), "question", "1")]
+    levels = ("p-", "p-r-repo-a", "p-s-s1")
+    check("each still-open row counts decision 2 then question 1, action left out",
+          {panel_id: _row_counts(_panel(page, panel_id), "[still_open]") for panel_id in levels}, {panel_id: want for panel_id in levels})
+    quiet = render.page(_report(), _digest())
+    check("with nothing open each still-open row's counts span is empty",
+          {panel_id: _row_summary(_panel(quiet, panel_id), "[still_open]").endswith('[still_open]<span class="counts"></span>') for panel_id in levels},
+          {panel_id: True for panel_id in levels})
+
+
+def test_happened_counts_below_the_overview():
+    s1 = dict(_body(done=[]), decided=["c1", "c2"], found=["f1"])
+    digest = _digest([_group_of("repo-a", [_session("s1"), _session("s2", first="11:00", last="12:00")])])
+    page = render.page(_report({"s1": s1, "s2": _body(done=["d1"])}), digest)
+    decided = ("decision", render.icon("decision"), "decided", "2")
+    done = ("action", render.icon("action"), "done", "1")
+    found = ("question", render.icon("question"), "found", "1")
+    # by hand: s1 decided two and found one with no done line, s2 did one, and the repository sums both
+    check("decided, done and found count with their twin kind's class and icon, a list with no lines left out",
+          {panel_id: _row_counts(_panel(page, panel_id), "[what_happened]") for panel_id in ("p-r-repo-a", "p-s-s1", "p-s-s2")},
+          {"p-r-repo-a": [decided, done, found], "p-s-s1": [decided, found], "p-s-s2": [done]})
+
+
+def test_range_linked_rows_carry_no_day():
+    report = _report({"a1": _body(open_items=[_item("action", "a1 x")], done=["a1 done"]),
+                      "a2": _body(open_items=[_item("decision", "a2 x")]),
+                      "b1": _body(open_items=[_item("question", "b1 x")], done=["b1 done"])}, **{"from": _FROM, "to": _TO})
+    page = render.page(report, _range_digest())
+    # by hand: the overview links all three open items and both done lines, each repository its own
+    for panel_id, linked in (("p-", 5), ("p-r-repo-a", 3), ("p-r-repo-b", 2)):
+        markup = _markup(_panel(page, panel_id))
+        check("on %s every item leads to its session" % panel_id, len(re.findall(r'<li[^>]* data-go="s-', markup)), linked)
+        check("on %s no item row carries a data-day" % panel_id, "data-day" in markup, False)
+    check("the range page's markup carries no data-day", "data-day" in _markup(page), False)
+
+
+def test_range_overview_happened_chip_shows_the_whole_date():
+    report = _report({"a1": _body(), "a2": _body(done=["a2 done"]), "b1": _body()}, **{"from": _FROM, "to": _TO})
+    overview = _panel(render.page(report, _range_digest()), "p-")
+    row = overview[_row_start(overview, "[what_happened]"):]
+    check("the overview's what-happened row starts folded", row.startswith('<details class="folded"><summary'), True)
+    # by hand: a2 last worked on 2026-10-06, so the chip writes that day whole
+    check("its item's date chip shows the whole YYYY-MM-DD", _linked(row),
+          [("a2", "a2 done", '<div class="where"><span class="date"><time datetime="2026-10-06">2026-10-06</time></span></div>')])
 
 
 # ----- panel keys ----------------------------------------------------------------
@@ -1452,9 +1601,9 @@ def test_shown_and_stamp_html():
     check("one day's page text is the time, with no time element", one_day[1], "09:00")
     axis = render.day_axis(_range_digest())
     on_range = _in_view(axis, lambda: (render.shown("2026-10-05 09:00"), render.stamp_html("2026-10-05 09:00")))
-    check("a range shows the month and day before the time", on_range[0], "10-05 09:00")
+    check("a range shows the whole date before the time", on_range[0], "2026-10-05 09:00")
     check("a range's page text carries the stamp in a time element", on_range[1],
-          '<time datetime="2026-10-05T09:00">10-05 09:00</time>')
+          '<time datetime="2026-10-05T09:00">2026-10-05 09:00</time>')
     check("the view is put back", render.VIEW, before)
 
 
@@ -1599,8 +1748,8 @@ def test_range_timeline_markup():
     # by hand: each day's middle, 0.5, 1.78, 2.78 and 4.06 over 4.56
     check("one date tick per day column, Monday marked",
           re.findall(r'<span class="dtick( mon)?" style="left:([0-9.]+)%"><time datetime="([^"]+)">([^<]+)</time></span>', ticks.group(2)),
-          [("", "10.965", "2026-10-02", "10-02"), (" mon", "39.035", "2026-10-05", "10-05"),
-           ("", "60.965", "2026-10-06", "10-06"), ("", "89.035", "2026-10-08", "10-08")])
+          [("", "10.965", "2026-10-02", "2026-10-02"), (" mon", "39.035", "2026-10-05", "2026-10-05"),
+           ("", "60.965", "2026-10-06", "2026-10-06"), ("", "89.035", "2026-10-08", "2026-10-08")])
     check("no hour ticks on a range", re.search(r">\d\d:00</span>", ticks.group(2)), None)
     tracks = re.findall(r'<div class="track" style="height:\d+px">(.*?)</div>', timeline)
     check("one track per repository", len(tracks), 2)
@@ -1613,7 +1762,8 @@ def test_range_timeline_markup():
                 re.findall(r'<button type="button" class="bar[^"]*" data-go="s-(\w+)" aria-label="([^"]*)" style="left:[0-9.]+%;width:([0-9.]+)%', timeline))
     check("a session spanning days is one bar", timeline.count('data-go="s-a2"'), 1)
     check("bars are labelled in plain text, dates included", {sid: label for sid, (label, _) in bars.items()},
-          {"a1": "repo-a 10-02 09:15-10-02 10:00", "a2": "repo-a 10-05 08:40-10-06 11:20", "b1": "repo-b 10-08 14:00-10-08 14:05"})
+          {"a1": "repo-a 2026-10-02 09:15-2026-10-02 10:00", "a2": "repo-a 2026-10-05 08:40-2026-10-06 11:20",
+           "b1": "repo-b 2026-10-08 14:00-2026-10-08 14:05"})
     # by hand: five minutes of a 21.93% day over seven hours is 21.93 * 0.973 * 5 / 420 = 0.25%, under the minimum
     check("a short bar is drawn at the minimum width", bars.get("b1", (None, None))[1], "0.90")
 
@@ -1635,14 +1785,14 @@ def _sidebar_child(page, sid):
 def test_range_text_and_attributes():
     digest = _range_digest()
     page = render.page(_range_report(), digest)
-    a2 = '<time datetime="2026-10-05T08:40">10-05 08:40</time>'
+    a2 = '<time datetime="2026-10-05T08:40">2026-10-05 08:40</time>'
     check("the session head's title is two time elements",
-          '<h2>%s\u2013<time datetime="2026-10-06T11:20">10-06 11:20</time> <span class="span"></span></h2>' % a2
+          '<h2>%s\u2013<time datetime="2026-10-06T11:20">2026-10-06 11:20</time> <span class="span"></span></h2>' % a2
           in _head(_panel(page, "p-s-a2")), True)
     child = _sidebar_child(page, "a2")
     check("the sidebar child is found", child is not None, True)
     if child is not None:
-        check("the sidebar child's title attribute is plain", child.group(1), "10-05 08:40 topic of the session")
+        check("the sidebar child's title attribute is plain", child.group(1), "2026-10-05 08:40 topic of the session")
         check("the sidebar child's text carries a time element",
               child.group(2), '<span class="nm"><span class="at">%s</span>topic of the session</span>' % a2)
     trail = re.search(r'<div class="trail-of" data-for="s-a2"[^>]*>(.*?)</div>', page).group(1)
@@ -1650,15 +1800,15 @@ def test_range_text_and_attributes():
           trail.endswith('<span class="here"><span class="at">%s</span>topic of the session</span></nav>' % a2), True)
     # by hand: the earliest first is a1's 10-02 09:15 and the latest last b1's 10-08 14:05
     check("the overview timeline heading carries two time elements",
-          '<h2>[timeline] <span><time datetime="2026-10-02T09:15">10-02 09:15</time>\u2013'
-          '<time datetime="2026-10-08T14:05">10-08 14:05</time></span></h2>' in _timeline_of(_panel(page, "p-")), True)
+          '<h2>[timeline] <span><time datetime="2026-10-02T09:15">2026-10-02 09:15</time>\u2013'
+          '<time datetime="2026-10-08T14:05">2026-10-08 14:05</time></span></h2>' in _timeline_of(_panel(page, "p-")), True)
     check("the session panel's data-title is plain",
           re.search(r'<section class="panel" id="p-s-a2" [^>]*data-title="([^"]*)"', page).group(1),
-          "repo-a 10-05 08:40 \u00b7 remind-me " + _SPAN)
+          "repo-a 2026-10-05 08:40 \u00b7 remind-me " + _SPAN)
     # a2 ends 10-06 11:20, after a1's 10-02 10:00, so it is the session the shortcut resumes
     titles = re.findall(r'<a class="btn" href="[^"]*" title="([^"]*)">', _head(_panel(page, "p-r-repo-a")))
     check("the repository's resume-last title is plain",
-          titles, [html.escape("%s 10-05 08:40-10-06 11:20" % _folder("repo-a"), quote=True)])
+          titles, [html.escape("%s 2026-10-05 08:40-2026-10-06 11:20" % _folder("repo-a"), quote=True)])
     attributes = re.findall(r' (?:title|aria-label|data-title)="([^"]*)"', page)
     check("no attribute on the page carries a time element", [value for value in attributes if "&lt;time" in value], [])
 
@@ -1719,8 +1869,8 @@ def test_summary_on_a_range():
     # by hand: repo-a has four open and comes first; a2 ended 10-06 after a1's 10-02, and within a session the last listed comes first,
     # so its newest three are a2 second, a2 first and a1 second, with 4 - 3 = 1 left; repo-b's one ended 10-08
     check("each repository lists its newest three open items with their session's last day, then the rest as a count",
-          lines[3:-4], ["", "### repo-a", "- [action]: a2 second (10-06)", "- [decision]: a2 first (10-06)", "- [question]: a1 second (10-02)",
-                        "- [more_in_repository 1 repo-a]", "", "### repo-b", "- [question]: b1 only (10-08)"])
+          lines[3:-4], ["", "### repo-a", "- [action]: a2 second (2026-10-06)", "- [decision]: a2 first (2026-10-06)",
+                        "- [question]: a1 second (2026-10-02)", "- [more_in_repository 1 repo-a]", "", "### repo-b", "- [question]: b1 only (2026-10-08)"])
     quiet = _in_view(None, lambda: render.summary(_range_report(), _range_digest(), out))
     check("a repository with nothing open is left out", [line for line in quiet.splitlines() if line.startswith("### ")], [])
 
@@ -1731,7 +1881,7 @@ def test_summary_on_a_range_ends_with_the_link():
     got = _in_view(None, lambda: render.summary(report, _range_digest(), out))
     # by hand: the range's one open item, then the same closing a one-day summary has
     check("ends with the last item, the page URI, then the language hint", got.splitlines()[-5:],
-          ["- [action]: a1 first (10-02)", "", pathlib.Path(out).resolve().as_uri(), "", "_[language_hint]_"])
+          ["- [action]: a1 first (2026-10-02)", "", pathlib.Path(out).resolve().as_uri(), "", "_[language_hint]_"])
     # a range with nothing open still closes the same way
     quiet = _in_view(None, lambda: render.summary(_range_report(), _range_digest(), out))
     check("with nothing open it still ends with the page URI then the language hint", quiet.splitlines()[-3:],
@@ -2114,7 +2264,7 @@ def test_dated():
     check("on one day the where-line is unchanged", _in_view(None, lambda: render.dated(where, session)), where)
     check("on one day an empty where-line stays empty", _in_view(None, lambda: render.dated("", session)), "")
     axis = render.day_axis(_range_digest())
-    chip = '<span class="date"><time datetime="2026-10-06">10-06</time></span>'
+    chip = '<span class="date"><time datetime="2026-10-06">2026-10-06</time></span>'
     check("on a range an empty where-line becomes the day of the session's last",
           _in_view(axis, lambda: render.dated("", session)), '<div class="where">%s</div>' % chip)
     check("on a range the day and a separator open a where-line",
@@ -2122,13 +2272,14 @@ def test_dated():
 
 
 def _linked(text):
-    """Each item that leads to its session in a stretch of the page, as (session, data-day, text, what follows the text), in page order."""
-    return re.findall(r'<li(?: class="[^"]*")?(?: hidden)? data-go="s-(\w+)" data-item="[^"]*"(?: data-day="([^"]*)")? tabindex="0">'
+    """Each item that leads to its session in a stretch of the page, as (session, text, what follows the text), in page order.
+    An item carrying a data-day does not match, since the day headings that read it are gone."""
+    return re.findall(r'<li(?: class="[^"]*")?(?: hidden)? data-go="s-(\w+)" data-item="[^"]*" tabindex="0">'
                       r'<div class="t">([^<]*)</div>(.*?)</li>', text)
 
 
 def _day_chip(day):
-    return '<div class="where"><span class="date"><time datetime="%s">%s</time></span></div>' % (day, day[5:])
+    return '<div class="where"><span class="date"><time datetime="%s">%s</time></span></div>' % (day, day)
 
 
 def test_range_items_newest_first_with_their_day():
@@ -2140,13 +2291,13 @@ def test_range_items_newest_first_with_their_day():
     a2_day, a1_day, b1_day = "2026-10-06", "2026-10-02", "2026-10-08"
     check("the overview lists each repository's items newest first, each with its day",
           _linked(_kind_section(page, "action")),
-          [("a2", a2_day, "a2 y", _day_chip(a2_day)), ("a2", a2_day, "a2 x", _day_chip(a2_day)),
-           ("a1", a1_day, "a1 x", _day_chip(a1_day)), ("b1", b1_day, "b1 x", _day_chip(b1_day))])
+          [("a2", "a2 y", _day_chip(a2_day)), ("a2", "a2 x", _day_chip(a2_day)),
+           ("a1", "a1 x", _day_chip(a1_day)), ("b1", "b1 x", _day_chip(b1_day))])
     cards = dict(_cards(_panel(page, "p-r-repo-a")))
     check("the repository panel lists its items newest first, each with its day", _linked(cards["action"]),
-          [("a2", a2_day, "a2 y", _day_chip(a2_day)), ("a2", a2_day, "a2 x", _day_chip(a2_day)), ("a1", a1_day, "a1 x", _day_chip(a1_day))])
+          [("a2", "a2 y", _day_chip(a2_day)), ("a2", "a2 x", _day_chip(a2_day)), ("a1", "a1 x", _day_chip(a1_day))])
     check("a line of what happened on the repository panel carries its day too", _linked(cards["twin action"]),
-          [("a2", a2_day, "a2 done", _day_chip(a2_day))])
+          [("a2", "a2 done", _day_chip(a2_day))])
     session = _panel(page, "p-s-a2")
     check("the session panel lists its items newest first, with no day",
           re.findall(r'<li id="([^"]*)"><div class="t">([^<]*)</div>(.*?)</li>', session),
@@ -2164,8 +2315,8 @@ def test_range_page_has_no_day_headings():
                       "a2": _body(open_items=[_item("action", "a2 x")], done=["a2 done"]),
                       "b1": _body(open_items=[_item("question", "b1 x")])}, **{"from": _FROM, "to": _TO})
     page = render.page(report, _range_digest())
-    # the script makes the headings when a card is maximised, so the name is on the page, just not in its markup
-    check("the script names the day heading", "dayhead" in "".join(re.findall(r"<script>(.*?)</script>", page, re.S)), True)
+    # the script once made the headings when a card was maximised, so the whole page is searched, script included
+    check("nothing on the page names the day heading, the script included", "dayhead" in page, False)
     check("the markup carries no day heading", "dayhead" in _markup(page), False)
 
 
@@ -2363,6 +2514,9 @@ _TESTS = (test_valid_report_has_no_problems, test_missing_top_level_fields, test
           test_code_chips, test_item_body, test_happened_cards, test_folded_overview_lane,
           test_item_anchors_and_links, test_lanes_below_the_overview, test_levels_fold_past_limit,
           test_folded_links_land_on_folded_items,
+          test_folded, test_lane, test_rows_open_by_level, test_row_summaries_carry_one_chevron, test_kind_counts,
+          test_open_counts_by_level, test_happened_counts_below_the_overview, test_range_linked_rows_carry_no_day,
+          test_range_overview_happened_chip_shows_the_whole_date,
           test_slugs, test_panel_keys, test_running_count_chip, test_summary_excludes_what_happened,
           test_fill_and_length, test_session_position, test_badge,
           test_range_report_fields, test_single_and_span_text, test_clock_and_minutes, test_shown_and_stamp_html,
