@@ -64,6 +64,8 @@ The transcript format is not documented, so the extractor rests on fields observ
 
 **Scope is decided by each record's own `cwd`**, compared on path boundaries. The project directory names under `~/.claude/projects` encode paths lossily, so matching on them puts `repo-a-generator` inside `repo-a`.
 
+**It opens a transcript past MAX_PATH by its extended-length form.** A project folder is named after the session's folder, so a session started in a deep scratchpad puts its transcript past 260 characters, and on Windows with long paths off one such file stopped the whole extractor with `FileNotFoundError`. `glob` still lists such a file, because only its folder is listed, so the fix is in the open. A file inside a folder that is itself past the limit is not listed at all, which today means only subagent transcripts, and those carry the parent's session and no typed prompt, so listing them would change nothing.
+
 Its output is forced to UTF-8, because a Windows console defaults to cp1252 and fails on the first prompt written in another script. `--text` prints the prompts grouped by session, because in both trial runs the model wrote its own code to print the JSON and hit that same cp1252 failure.
 
 **It drops copies of the same prompt.** A resumed or forked session writes the earlier conversation into a new transcript file, so one typed prompt can appear in two sessions with the same timestamp and text. In the third trial run, 14 of 594 prompts were such copies. Counted twice, one prompt looks like a pattern seen in two different sessions, which is the very threshold a pattern needs. The first copy is kept, and ties are broken by session so the choice does not depend on file order.

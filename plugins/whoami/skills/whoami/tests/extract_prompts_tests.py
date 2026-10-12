@@ -545,6 +545,98 @@ def test_text_on_cp1252_console():
           "[2026-09-01T10:00] " + text + "\n")
 
 
+# ----- transcripts past MAX_PATH are opened through the extended-length form ---
+
+def _openable_as(name, full, path):
+    """openable(path) with os.name as name and every absolute form as full, so any OS can play Windows."""
+    saved = os.name, os.path.abspath
+    os.name = name
+    os.path.abspath = lambda p: full
+    try:
+        return ep.openable(path)
+    finally:
+        os.name, os.path.abspath = saved
+
+
+def test_openable():
+    # by hand: "C:\" is 3 characters, so these absolute forms are exactly 260 and 259 long
+    at_limit = "C:\\" + "x" * 257
+    under = "C:\\" + "x" * 256
+    check("on Windows an absolute form of 260 characters is the extended-length form of it",
+          _openable_as("nt", at_limit, "s1.jsonl"), "\\\\?\\" + at_limit)
+    check("on Windows an absolute form of 259 characters leaves the path unchanged",
+          _openable_as("nt", under, "s1.jsonl"), "s1.jsonl")
+    extended = "\\\\?\\" + at_limit
+    check("on Windows a path already in the extended-length form is unchanged",
+          _openable_as("nt", extended, extended), extended)
+    check("off Windows a path of any length is unchanged", _openable_as("posix", "/" + "x" * 400, "s1.jsonl"),
+          "s1.jsonl")
+    if os.name == "nt":
+        deep = os.path.join(tempfile.mkdtemp(), "p" * 255)
+        check("on this Windows a real path past 260 characters gets the prefix", ep.openable(deep), "\\\\?\\" + deep)
+        short = os.path.join(tempfile.mkdtemp(), "s1.jsonl")
+        check("on this Windows a real short path is unchanged", ep.openable(short), short)
+
+
+def test_openable_used_by_extract():
+    # glob lists only files that exist, so the listed transcript holds a decoy,
+    # and only openable leads extract to the real one kept outside the projects dir
+    projects = _projects({"proj/s1.jsonl": [_user("decoy prompt")]})
+    real = os.path.join(_projects({"elsewhere/s1.jsonl": [_user("fix the build")]}), "elsewhere", "s1.jsonl")
+    listed = os.path.join(projects, "proj", "s1.jsonl")
+    saved = ep.openable
+    ep.openable = lambda path: real if path == listed else path
+    try:
+        got = ep.extract([ep.normalise(ROOT)], projects)
+    finally:
+        ep.openable = saved
+    check("extract reads the file openable returns, not the path it listed", got,
+          (1, [{"session": "s1", "time": T1, "cwd": ROOT, "text": "fix the build"}]))
+
+
+# a session id adds its 36 characters and ".jsonl" to the project folder's path,
+# which is what takes a transcript in a deep folder past the limit
+_LONG_ID = "a1b2c3d4-0000-4000-8000-000000000001"
+
+
+def _long_projects(files):
+    """Like _projects, but the project folder's path is 240 characters, so the folder still lists
+    while every transcript in it runs past 260, as a session started in a deep folder leaves it.
+    Files are written through the extended-length form, the only one Windows accepts that deep."""
+    root = tempfile.mkdtemp()
+    project = os.path.join(root, "p" * max(1, 240 - len(root) - 1))
+    for rel, records in files.items():
+        path = "\\\\?\\" + os.path.join(project, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            for r in records:
+                f.write(json.dumps(r, separators=(",", ":"), ensure_ascii=False) + "\n")
+    return root, project
+
+
+def test_long_path_transcript():
+    # only Windows has a MAX_PATH to run past, and test_openable plays it for every other OS
+    if os.name != "nt":
+        # a group with no check prints nothing, so this says it was skipped rather than passed
+        check("NOT RUN here: only Windows has a MAX_PATH to run past, so this group runs on Windows alone",
+              os.name == "nt", False)
+        return
+    # the checks below prove the fix only where Windows has LongPathsEnabled at 0:
+    # where it is 1, python.exe opens a path past 260 with no prefix,
+    # so they pass even with openable removed.
+    # test_openable_used_by_extract proves the wiring on every machine.
+    root, project = _long_projects({_LONG_ID + ".jsonl": [_user("fix the build", session=_LONG_ID)]})
+    path = os.path.join(project, _LONG_ID + ".jsonl")
+    check("fixture: the transcript's path is past 260 characters and its folder's is not",
+          (len(path) >= 260, len(project) < 260), (True, True))
+    try:
+        got = ep.extract([ep.normalise(ROOT)], root)
+    except OSError as exc:
+        got = "raised " + type(exc).__name__
+    check("extract reads the prompt in a transcript past 260 characters", got,
+          (1, [{"session": _LONG_ID, "time": T1, "cwd": ROOT, "text": "fix the build"}]))
+
+
 _TESTS = (test_human_prompt_extracted, test_model_written_records_excluded, test_human_prompt_predicate,
           test_scope, test_normalise, test_nested_cwd_does_not_decide, test_strip_pastes, test_text_of,
           test_sessions_in_scope, test_session_falls_back_to_file_name, test_sorted_by_timestamp,
@@ -555,7 +647,7 @@ _TESTS = (test_human_prompt_extracted, test_model_written_records_excluded, test
           test_main_leaves_out_whoami_runs, test_main_exit_status_judged_before_drop,
           test_main_keeps_the_copy_from_the_first_session, test_main_reports_copies_dropped,
           test_main_drops_whoami_runs_before_copies, test_main_text, test_main_text_reports_copies_dropped,
-          test_text_on_cp1252_console)
+          test_text_on_cp1252_console, test_openable, test_openable_used_by_extract, test_long_path_transcript)
 
 
 def _run_all():

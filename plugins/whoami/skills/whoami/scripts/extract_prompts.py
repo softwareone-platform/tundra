@@ -66,11 +66,25 @@ def strip_pastes(text):
     return PASTE.sub(lambda m: "[pasted text, %d characters]" % len(m.group(0)), text)
 
 
+def openable(path):
+    """The path as Windows can open it: past MAX_PATH only the extended-length form works.
+
+    A project folder is named after the session's folder, so a session started deep enough
+    puts its transcript past 260 characters, and one such file stopped the whole extractor.
+    """
+    if os.name != "nt":
+        return path
+    full = os.path.abspath(path)
+    if len(full) < 260 or full.startswith("\\\\?\\"):
+        return path
+    return "\\\\?\\" + full
+
+
 def extract(roots, projects):
     sessions = set()
     prompts = []
     for path in glob.glob(os.path.join(projects, "**", "*.jsonl"), recursive=True):
-        with open(path, encoding="utf-8", errors="replace") as handle:
+        with open(openable(path), encoding="utf-8", errors="replace") as handle:
             for line in handle:
                 match = CWD.search(line)
                 if not match:
