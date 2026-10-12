@@ -1,4 +1,4 @@
-<!-- translated from README.md, source sha256 f672103aa8f738b0f79a7089ed8b66ba71244f63b778ddd404e84f4af238bf24; see the root CLAUDE.md "Translations of a plugin's README" before editing -->
+<!-- translated from README.md, source sha256 1bcab4d2d384d32f9a7ba05c9731f8800c3f3054a4450b0523814f795a344978; see the root CLAUDE.md "Translations of a plugin's README" before editing -->
 # remind-me
 
 [English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
@@ -44,7 +44,7 @@ flowchart TB
     git["每个 repository 里的 git<br>branch、未 commit 和未 push 的工作"] --> collect
     remote["Azure DevOps 或 GitHub<br>每个提到的 pull request 的状态"] --> collect
     collect["collect.py<br>保留那几天的 prompt，排除 claude -p 运行记录"] --> digest["Digest<br>那几天 transcript 的摘录"]
-    digest -- 摘录 --> model["LLM，范围长时每个 repository 一个 reader<br>判断主题、决定、完成、查明和待处理的事"]
+    digest -- 摘录 --> model["LLM，每个 repository 一个 reader<br>判断主题、决定、完成、查明和待处理的事"]
     model -- 报告 --> render["render.py<br>生成摘要和页面"]
     digest -- 所有数字、时间和状态 --> render
     render --> page["session 里的摘要<br>以及 plugin 文件夹里的 HTML 页面"]

@@ -43,7 +43,7 @@ flowchart TB
     git["git in each repository<br>branches, uncommitted and unpushed work"] --> collect
     remote["Azure DevOps or GitHub<br>the state of each pull request named"] --> collect
     collect["collect.py<br>keeps the prompts of those days, leaves out claude -p runs"] --> digest["Digest<br>excerpts of those days' transcripts"]
-    digest -- excerpts --> model["LLM, one reader per repository on a long range<br>judges topics, what was decided, done and found, what is open"]
+    digest -- excerpts --> model["LLM, one reader per repository<br>judges topics, what was decided, done and found, what is open"]
     model -- report --> render["render.py<br>builds the summary and the page"]
     digest -- every figure, time and state --> render
     render --> page["Summary in the session<br>and an HTML page in the plugin's data folder"]
