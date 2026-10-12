@@ -204,8 +204,22 @@ def add_usage(totals, seen, entry):
         bucket[field] += usage.get(field) or 0
 
 
-def subagent_usage(path, days, totals):
-    """Subagents spend on the session's behalf, so their usage counts toward it."""
+def moment(timestamp):
+    """An ISO timestamp as an aware datetime, or None when it does not parse."""
+    try:
+        moment = datetime.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+    # a timestamp without an offset is read as local, the way local_time reads it, so two of them always compare
+    return moment if moment.tzinfo else moment.astimezone()
+
+
+def in_runs(when, runs):
+    return bool(when) and any(start <= when and (end is None or when < end) for start, end in runs)
+
+
+def subagent_usage(path, days, totals, runs=()):
+    """Subagents spend on the session's behalf, so their usage counts toward it, except while this skill was running."""
     folder = os.path.join(path[:-len(".jsonl")], "subagents")
     for sub_path in glob.glob(os.path.join(folder, "*.jsonl")):
         seen = set()
@@ -218,7 +232,8 @@ def subagent_usage(path, days, totals):
                 except ValueError:
                     continue
                 when = local_time(entry.get("timestamp", ""))
-                if when and when[0] in days:
+                # the readers this skill sends out are part of its run, not work on the days it reports
+                if when and when[0] in days and not in_runs(moment(entry.get("timestamp", "")), runs):
                     add_usage(totals, seen, entry)
 
 
@@ -254,6 +269,8 @@ def read_session(path, days):
     prs = set()
     replies = []
     in_run = False
+    # each run of this skill as [start, end), end None while it is still going, so its subagents can be left out too
+    runs = []
     with open(path, encoding="utf-8", errors="replace") as handle:
         for line in handle:
             try:
@@ -268,6 +285,8 @@ def read_session(path, days):
             prompt = typed_prompt(entry) if kind == "user" else None
             # a run is followed on every day, so one started the evening before the range is still recognised inside it
             if prompt and invokes_remind_me(prompt[1]):
+                if not in_run:
+                    runs.append([moment(entry.get("timestamp", "")), None])
                 in_run = True
                 continue
             if in_run:
@@ -276,6 +295,7 @@ def read_session(path, days):
                 if not (prompt and prompt[0] in ("prompt", "command")):
                     continue
                 in_run = False
+                runs[-1][1] = moment(entry.get("timestamp", ""))
             when = local_time(entry.get("timestamp", ""))
             if not when or when[0] not in days:
                 continue
@@ -306,7 +326,7 @@ def read_session(path, days):
                         prs.update(pull_requests(command))
     if session["first"] is None:
         return None
-    subagent_usage(path, days, session["usage"])
+    subagent_usage(path, days, session["usage"], [run for run in runs if run[0]])
     session["branches"] = branches
     session["pull_requests"] = sorted(prs)
     session["questions"] = [{"at": clock, "text": text[-QUESTION_TAIL:]} for clock, text in replies if is_question(text)]
@@ -559,6 +579,30 @@ def collect(first=None, last=None, live=True, root=None, today=None):
     return digest
 
 
+def split(digest, folder):
+    """One digest per repository, each with the whole digest's range and identities and only its own pull requests.
+
+    A long range is read by one reader per repository, and an item is settled within its repository,
+    so each reader needs everything about its repository and nothing about the others.
+    Returns (file name, bytes) per repository, in the digest's order.
+    """
+    os.makedirs(folder, exist_ok=True)
+    written, taken = [], set()
+    for group in digest["repositories"]:
+        base = re.sub(r"[^\w.-]+", "-", os.path.basename(group["path"].rstrip("\\/")).lower()).strip("-.") or "repository"
+        name, number = base, 2
+        while name in taken:
+            name, number = "%s-%d" % (base, number), number + 1
+        taken.add(name)
+        keys = {key for session in group["sessions"] for key in session["pull_requests"]}
+        part = dict(digest, repositories=[group], pull_requests={key: state for key, state in digest["pull_requests"].items() if key in keys})
+        text = json.dumps(part, ensure_ascii=False, indent=1)
+        with open(os.path.join(folder, name + ".json"), "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        written.append((name + ".json", len(text.encode("utf-8"))))
+    return written
+
+
 def local_day(parser, flag, value):
     # fromisoformat alone also accepts 20260904 and 2026-W36-5, which match no day key and read as an empty range
     try:
@@ -581,7 +625,10 @@ def main(argv=None, today=None):
     parser.add_argument("--to", dest="last", help="last local day of the range, YYYY-MM-DD; today when left out")
     parser.add_argument("--out", help="write the digest here instead of stdout")
     parser.add_argument("--no-live", action="store_true", help="skip git and pull request lookups")
+    parser.add_argument("--split", help="also write one digest per repository into this folder")
     args = parser.parse_args(argv)
+    if args.split and not args.out:
+        parser.error("--split needs --out")
     today = today or datetime.date.today()
     if args.last and not args.first:
         parser.error("--to needs --from")
@@ -599,11 +646,14 @@ def main(argv=None, today=None):
     text = json.dumps(digest, ensure_ascii=False, indent=1)
     if args.out:
         os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
-        with open(args.out, "w", encoding="utf-8") as handle:
+        with open(args.out, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text)
         sessions = sum(len(group["sessions"]) for group in digest["repositories"])
         print("%s: %d sessions in %d folders, %d headless runs left out, %d bytes -> %s"
               % (describe(digest), sessions, len(digest["repositories"]), digest["left_out"]["headless"], len(text.encode("utf-8")), args.out))
+        if args.split:
+            for name, size in split(digest, args.split):
+                print("  %d bytes -> %s" % (size, os.path.join(args.split, name)))
     else:
         sys.stdout.reconfigure(encoding="utf-8")
         print(text)

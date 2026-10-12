@@ -30,10 +30,12 @@ LABELS = ("sessions", "repositories", "prompts", "pull_requests", "tokens", "tok
           "uncommitted", "unpushed", "nothing_open", "nothing_happened", "as_of", "language_hint", "resume_last", "here", "state_unread", "copy_path",
           "show_all", "repository_list", "decided", "found", "cache_read", "cache_write", "uncached_input", "decision", "action", "question",
           "level_day", "level_range", "level_repository", "level_session", "session_position", "still_open", "what_happened",
-          "duration", "duration_minutes", "timeline", "session_count", "running_count", "cannot_resume", "token_mix")
+          "duration", "duration_minutes", "timeline", "session_count", "running_count", "cannot_resume", "token_mix",
+          "more_in_repository", "newer", "older", "maximise", "restore")
 # the labels that carry numbers or names, and the placeholders each must keep so the renderer can fill them in
 PLACEHOLDERS = {"session_position": ("n", "total"), "duration": ("hours", "minutes"), "duration_minutes": ("minutes",),
-                "session_count": ("n", "repository"), "running_count": ("n",)}
+                "session_count": ("n", "repository"), "running_count": ("n",),
+                "more_in_repository": ("n", "repository"), "newer": ("n",), "older": ("n",)}
 KINDS = ("decision", "action", "question")
 # each open kind has a twin among what happened: a decision is decided, an action done, a question found
 TWINS = (("decided", "decision", "c"), ("done", "action", "d"), ("found", "question", "f"))
@@ -42,6 +44,10 @@ SESSION_KEYS = ("topics", "open", "decided", "done", "found")
 ITEM_KEYS = ("kind", "text", "detail")
 # a kind with more open items than this shows its first ones and folds the rest behind a button
 OVERVIEW_LIMIT = 10
+# the overview shows each repository's latest few, since a repository's items are usually about the same work, and links to the rest
+PER_REPOSITORY = 3
+# the side panel lists at most this many of a repository's sessions at a time, in pages of an even share
+SIDE_PAGE = 8
 
 e = html.escape
 
@@ -109,6 +115,29 @@ def problems_in(report, digest):
         found.append("session %s from the digest has no entry in the report" % session_id)
     # one line per problem, however many items share it
     return list(dict.fromkeys(found))
+
+
+def merged(report, fragments):
+    """The report with each reader's sessions folded in, and the problems the fragments carry themselves.
+
+    A long range is judged by one reader per repository, each writing only its sessions,
+    so the sessions arrive as fragments beside a report that holds everything else.
+    """
+    found = []
+    if not fragments or not isinstance(report, dict):
+        return report, found
+    sessions = dict(report["sessions"]) if isinstance(report.get("sessions"), dict) else {}
+    for name, fragment in fragments:
+        if not isinstance(fragment, dict) or not isinstance(fragment.get("sessions"), dict):
+            found.append("fragment %s must be an object with a sessions object" % name)
+            continue
+        found += ["fragment %s: unknown field %s" % (name, key) for key in fragment if key != "sessions"]
+        for session_id, body in fragment["sessions"].items():
+            # two readers judging one session would leave whichever ran last, so a repeat is refused rather than settled by order
+            if session_id in sessions:
+                found.append("session %s is in more than one fragment" % session_id)
+            sessions[session_id] = body
+    return dict(report, sessions=sessions), found
 
 
 def lines_ok(value):
@@ -419,41 +448,96 @@ def code_chips(text):
     return "".join(out)
 
 
+def newest_first(pairs):
+    """The latest session's items first, and within a session the last the model listed, since the page is read to pick work up again."""
+    # the session id keeps one session's items together when two sessions end in the same minute
+    return sorted(pairs, key=lambda pair: (minutes(pair[2]["last"]), pair[2]["id"], pair[3]), reverse=True)
+
+
+def dated(where, session):
+    """On a range an item says which day its session last worked on it, since the list spans many days."""
+    if not VIEW["range"]:
+        return where
+    day = day_of(session["last"])
+    chip = '<span class="date"><time datetime="%s">%s</time></span>' % (e(day, quote=True), e(day[5:]))
+    if where:
+        return where.replace('<div class="where">', '<div class="where">' + chip + '<span class="sep">\u00b7</span>', 1)
+    return '<div class="where">%s</div>' % chip
+
+
 def item_body(item, where=""):
     detail = '<div class="d">%s</div>' % code_chips(item["detail"]) if str(item.get("detail", "")).strip() else ""
     return '<div class="t">%s</div>%s%s' % (code_chips(item["text"]), detail, where)
 
 
-def limited(rows, labels):
-    """A kind with more items than the limit shows its first ones, and a button opens the rest in place."""
+def limited(rows, labels, key=None):
+    """A kind with more items than the limit shows its first ones, and a button maximises the card to show them all."""
     if len(rows) <= OVERVIEW_LIMIT:
         return "".join(rows), ""
     shown = rows[:OVERVIEW_LIMIT] + [row.replace("<li", '<li class="more" hidden', 1) for row in rows[OVERVIEW_LIMIT:]]
-    return "".join(shown), '<button type="button" class="btn ghost show-all">%s (%d)</button>' % (e(labels["show_all"]), len(rows))
+    return "".join(shown), ('<button type="button" class="btn ghost show-all" data-max-kind="%s">%s (%d)</button>'
+                            % (e(key or "", quote=True), e(labels["show_all"]), len(rows)))
 
 
-def card(kind, badge, rows, labels, clamp=False):
-    body, more = limited(rows, labels)
-    return ('<section class="card col %s%s"><h3 class="kindhead"><span class="kind">%s</span> %d</h3><ul class="items">%s</ul>%s</section>'
-            % (kind, " clamp" if clamp else "", badge, len(rows), body, more))
+def max_buttons(key, labels):
+    """Maximise and restore sit in the card's own heading; the page shows the one that fits the card's state."""
+    return ('<button type="button" class="maxbtn grow" data-max-kind="%s" title="%s" aria-label="%s">%s</button>'
+            '<button type="button" class="maxbtn shrink" data-max-restore title="%s" aria-label="%s">%s</button>'
+            % (e(key, quote=True), e(labels["maximise"], quote=True), e(labels["maximise"], quote=True), icon("maximise"),
+               e(labels["restore"], quote=True), e(labels["restore"], quote=True), icon("restore")))
+
+
+def card(kind, badge, rows, labels, clamp=False, key=None):
+    body, more = limited(rows, labels, key)
+    return ('<section class="card col %s%s" data-kind="%s" data-count="%d"><h3 class="kindhead"><span class="kind">%s</span> %d%s</h3><ul class="items">%s</ul>%s</section>'
+            % (kind, " clamp" if clamp else "", e(key or kind, quote=True), len(rows), badge, len(rows), max_buttons(key or kind, labels), body, more))
+
+
+def grouped_card(kind, badge, rows_by_group, labels, clamp=False, key=None):
+    """The overview's card: a block per repository with its latest items and a link to the rest on the repository's page."""
+    blocks = []
+    for group, slug, rows in rows_by_group:
+        if not rows:
+            continue
+        rest = len(rows) - PER_REPOSITORY
+        more = ('<button type="button" class="btn quiet more-link" data-go="r-%s">%s</button>'
+                % (e(slug, quote=True), e(fill(labels["more_in_repository"], n=rest, repository=name_of(group))))) if rest > 0 else ""
+        # the rest stay in the page for the maximised card, which shows each repository whole
+        rows = rows[:PER_REPOSITORY] + [row.replace("<li", '<li class="beyond"', 1) for row in rows[PER_REPOSITORY:]]
+        blocks.append('<div class="group"><div class="ghead">%s<span class="nm">%s</span><b>%d</b></div><ul class="items">%s</ul>%s</div>'
+                      % (tile(group), e(name_of(group)), len(rows), "".join(rows), more))
+    total = sum(len(rows) for _, _, rows in rows_by_group)
+    return ('<section class="card col %s%s" data-kind="%s" data-count="%d"><h3 class="kindhead"><span class="kind">%s</span> %d%s</h3><div class="groups">%s</div></section>'
+            % (kind, " clamp" if clamp else "", e(key or kind, quote=True), total, badge, total, max_buttons(key or kind, labels),
+               "".join(blocks) or '<ul class="items"></ul>'))
 
 
 def item_row(content, session, key, linked):
     """Above the session level an item leads to its session; on the session's own page it is the destination, so it stays plain."""
     anchor = "i-%s-%s" % (session["id"], key)
+    # a maximised card on a range sets a heading over each day, from the day its session last worked on the item
+    day = ' data-day="%s"' % e(day_of(session["last"]), quote=True) if VIEW["range"] and linked else ""
     if linked:
-        return '<li data-go="s-%s" data-item="%s" tabindex="0">%s</li>' % (e(session["id"], quote=True), e(anchor, quote=True), content)
+        return '<li data-go="s-%s" data-item="%s"%s tabindex="0">%s</li>' % (e(session["id"], quote=True), e(anchor, quote=True), day, content)
     return '<li id="%s">%s</li>' % (e(anchor, quote=True), content)
 
 
-def open_cards(pairs, labels, every_kind, where, linked=True):
-    """One card per kind of open item; the overview keeps all three, the levels below only those with items."""
+def open_cards(pairs, labels, every_kind, where, linked=True, groups=None):
+    """One card per kind of open item; the overview keeps all three, grouped by repository, the levels below only those with items."""
     cards = []
+    pairs = newest_first(pairs)
     for kind in KINDS:
-        rows = [item_row(item_body(item, where(group, session)), session, "o%d" % number, linked)
-                for item, group, session, number in pairs if item["kind"] == kind]
-        if rows or every_kind:
-            cards.append(card(kind, icon(kind) + e(labels[kind]), rows, labels, clamp=every_kind))
+        chosen = [pair for pair in pairs if pair[0]["kind"] == kind]
+        if not chosen and not every_kind:
+            continue
+        row = lambda item, group, session, number: item_row(item_body(item, dated(where(group, session), session) if linked else where(group, session)),
+                                                            session, "o%d" % number, linked)
+        badge_html = icon(kind) + e(labels[kind])
+        if groups is not None:
+            cards.append(grouped_card(kind, badge_html, [(group, slug, [row(*pair) for pair in chosen if pair[1]["path"] == group["path"]]) for group, slug in groups],
+                                      labels, clamp=every_kind, key=kind))
+        else:
+            cards.append(card(kind, badge_html, [row(*pair) for pair in chosen], labels, clamp=every_kind, key=kind))
     return cards
 
 
@@ -462,14 +546,21 @@ def lane(title, cards, empty):
     return '<p class="lanetitle">%s</p>%s' % (e(title), content)
 
 
-def happened_cards(entries, report, labels, linked, where):
+def happened_cards(entries, report, labels, linked, where, groups=None):
     """What happened, one card per list that has lines, each carrying the icon and colour of the open kind it answers."""
     cards = []
     for key, kind, prefix in TWINS:
-        rows = [item_row('<div class="t">%s</div>%s' % (code_chips(line), where(group, session)), session, "%s%d" % (prefix, number), linked)
-                for group, session in entries for number, line in enumerate(body_of(report, session).get(key, []))]
-        if rows:
-            cards.append(card("twin " + kind, icon(kind) + e(labels[key]), rows, labels))
+        lines = newest_first([(line, group, session, number) for group, session in entries for number, line in enumerate(body_of(report, session).get(key, []))])
+        row = lambda line, group, session, number: item_row('<div class="t">%s</div>%s' % (code_chips(line), dated(where(group, session), session) if linked else where(group, session)),
+                                                            session, "%s%d" % (prefix, number), linked)
+        if not lines:
+            continue
+        badge_html = icon(kind) + e(labels[key])
+        if groups is not None:
+            cards.append(grouped_card("twin " + kind, badge_html, [(group, slug, [row(*one) for one in lines if one[1]["path"] == group["path"]]) for group, slug in groups],
+                                      labels, key=key))
+        else:
+            cards.append(card("twin " + kind, badge_html, [row(*one) for one in lines], labels, key=key))
     return cards
 
 
@@ -555,7 +646,8 @@ def overview_panel(digest, report, labels, groups, span):
                "".join('<span><i style="background:var(--mix-%s)"></i>%s %s (%.1f%%)</span>' % (key, e(name), compact(parts[key]), 100.0 * parts[key] / whole)
                        for key, name in mix_names)))
     pairs = [(item, group, session, number) for group, _ in groups for session in by_time(group) for number, item in enumerate(body_of(report, session).get("open", []))]
-    cards = open_cards(pairs, labels, True, lambda group, session: '<div class="where">%s%s</div>' % (tile(group), e(name_of(group))))
+    # the repository heads each block of the overview's cards, so an item there carries only its day
+    cards = open_cards(pairs, labels, True, lambda group, session: "", groups=groups)
     first = stamp_html(min(session["first"] for session in all_sessions(digest)))
     last = stamp_html(max(session["last"] for session in all_sessions(digest)))
     return (trail(("", e(labels["all_open"]))), head
@@ -566,8 +658,7 @@ def overview_panel(digest, report, labels, groups, span):
 
 def folded_happened(groups, report, labels):
     entries = [(group, session) for group, _ in groups for session in by_time(group)]
-    where = lambda group, session: '<div class="where">%s%s</div>' % (tile(group), e(name_of(group)))
-    cards = happened_cards(entries, report, labels, True, where)
+    cards = happened_cards(entries, report, labels, True, lambda group, session: "", groups=groups)
     if not cards:
         return ""
     counts = "".join('<span class="kind %s">%s%s %d</span>' % (kind, icon(kind), e(labels[key]), total)
@@ -651,15 +742,27 @@ def sidebar(digest, report, labels, groups):
         rows.append('<button type="button" class="nav" data-go="r-%s" data-repo="%s">%s<span class="nm">%s</span>%s<span class="badge">%s</span></button>'
                     % (e(slug, quote=True), e(slug, quote=True), tile(group), e(name_of(group)), dot, badge(open_count(group, report))))
         children = []
-        for session in by_time(group):
+        sessions = list(reversed(by_time(group)))
+        # an even share per page, so 26 sessions read 7, 7, 7, 5 rather than 8, 8, 8, 2
+        pages = max((len(sessions) + SIDE_PAGE - 1) // SIDE_PAGE, 1)
+        size = (len(sessions) + pages - 1) // pages
+        for number, session in enumerate(sessions):
             count = len(body_of(report, session).get("open", []))
             running = '<i class="dot" title="%s" aria-label="%s"></i>' % (e(labels["running"], quote=True), e(labels["running"], quote=True)) if session.get("running") else ""
             # the panel cuts the name to fit, so hovering shows it whole
-            children.append('<button type="button" class="nav child" data-go="s-%s" title="%s">%s%s%s</button>'
-                            % (e(session["id"], quote=True), e("%s %s" % (shown(session["first"]), body_of(report, session)["topics"][0]), quote=True),
+            children.append('<button type="button" class="nav child" data-go="s-%s" data-p="%d"%s title="%s">%s%s%s</button>'
+                            % (e(session["id"], quote=True), number // size, " hidden" if number >= size else "",
+                               e("%s %s" % (shown(session["first"]), body_of(report, session)["topics"][0]), quote=True),
                                '<span class="nm">%s</span>' % session_name(report, session),
                                running, '<span class="badge small">%s</span>' % badge(count) if count else ""))
-        rows.append('<div class="children" data-children="%s" hidden>%s</div>' % (e(slug, quote=True), "".join(children)))
+        steps = ("", "")
+        if pages > 1:
+            # the side panel is narrow, so turning the page costs a row where the next session would be, not a line of controls
+            steps = ('<button type="button" class="step-row" data-sstep="-1" hidden>%s<span></span></button>' % icon("up"),
+                     '<button type="button" class="step-row" data-sstep="1">%s<span>%s</span></button>' % (icon("down"), e(fill(labels["older"], n=len(sessions) - size))))
+        rows.append('<div class="children" data-children="%s" data-pages="%d" data-size="%d" data-total="%d" data-newer="%s" data-older="%s" hidden>%s%s%s</div>'
+                    % (e(slug, quote=True), pages, size, len(sessions), e(labels["newer"], quote=True), e(labels["older"], quote=True),
+                       steps[0], "".join(children), steps[1]))
     return ('<aside class="card side"><div class="day">%s</div><div class="asof">%s %s</div>%s<hr><div class="sec">%s</div>%s</aside>'
             % (e(span_text(digest)), e(labels["as_of"]), e(readable(digest.get("generated"))), rows[0], e(labels["repository_list"]), "".join(rows[1:])))
 
@@ -687,6 +790,9 @@ ICONS = {
     "sun": "<circle cx='12' cy='12' r='4'/><path d='M12 2v2'/><path d='M12 20v2'/><path d='m4.93 4.93 1.41 1.41'/><path d='m17.66 17.66 1.41 1.41'/><path d='M2 12h2'/><path d='M20 12h2'/><path d='m6.34 17.66-1.41 1.41'/><path d='m19.07 4.93-1.41 1.41'/>",
     "moon": "<path d='M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401'/>",
     "chevron": "<path d='m9 18 6-6-6-6'/>",
+    "down": "<path d='m6 9 6 6 6-6'/>",
+    "maximise": "<path d='M15 3h6v6'/><path d='m21 3-7 7'/><path d='m3 21 7-7'/><path d='M9 21H3v-6'/>",
+    "restore": "<path d='m14 10 7-7'/><path d='M20 10h-6V4'/><path d='m3 21 7-7'/><path d='M4 14h6v6'/>",
     "mark": "<path d='M12 6v6l1.5.8'/><path d='M12.338 21.994a10 10 0 1 1 9.587-8.767'/><path d='M14 18h8'/><path d='m18 22-4-4 4-4'/>",
 }
 
@@ -860,11 +966,42 @@ svg.link path { fill:none; stroke:var(--lv); stroke-width:2 } svg.link circle { 
 .d { color:var(--soft); font-size:13.5px; margin-top:2px }
 .clamp .d { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden }
 .where { display:flex; gap:6px; align-items:center; color:var(--faint); font-size:12px; margin-top:4px }
+.where .date { font-variant-numeric:tabular-nums } .where .sep { opacity:.6 }
+.group { display:grid; gap:8px }
+/* a repository's block is set off from the next more strongly than one item from another, without a colour of its own */
+.group + .group { margin-top:8px; padding-top:16px; border-top:2px solid color-mix(in srgb, var(--ink) 26%, transparent) }
+.group .items li { border-top-color:color-mix(in srgb, var(--ink) 6%, transparent) }
+.ghead { display:flex; gap:8px; align-items:center; font-size:13px; font-weight:600; color:var(--soft); min-width:0 }
+.ghead .tile { width:20px; height:20px; font-size:11px; border-radius:6px } .ghead .nm { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.ghead b { margin-left:auto; font-size:12px; font-variant-numeric:tabular-nums }
+.more-link { justify-self:start; font-size:12.5px; padding:2px 6px; margin-left:-6px; color:var(--accent) }
+.step-row { display:flex; gap:6px; align-items:center; width:100%; padding:4px 10px; border:0; border-radius:8px; background:none; color:var(--accent);
+  font-size:12.5px; text-align:left; cursor:pointer }
+.step-row .i { width:14px; height:14px }
+.kindhead .maxbtn { border:0; background:none; color:var(--soft); padding:4px; border-radius:6px; cursor:pointer; display:inline-grid }
+.kindhead .maxbtn.grow { margin-left:auto }
+.kindhead .maxbtn .i { width:15px; height:15px }
+.kindhead .maxbtn:hover { color:var(--ink); background:color-mix(in srgb, var(--ink) 8%, transparent) }
+.maxbtn.shrink, .max-on .maxbtn.grow { display:none } .max-on .maxbtn.shrink { display:inline-grid; margin-left:auto }
+/* a maximised card takes its row alone and shows every item in columns, its repositories or its days kept whole */
+.cards.maxed { grid-template-columns:minmax(0, 1fr) } .cards.maxed > .col:not(.max-on) { display:none }
+.max-on .items, .max-on .groups { display:block; column-width:380px; column-gap:34px }
+.max-on .items li { break-inside:avoid; margin-bottom:12px }
+.max-on .groups .items { column-width:auto; columns:auto } .max-on .group { break-inside:avoid; display:block; margin-bottom:18px }
+.group li.beyond { display:none } .max-on .group li.beyond { display:block }
+.max-on .more-link, .max-on .show-all { display:none }
+.max-on.clamp .d { display:block; -webkit-line-clamp:unset; overflow:visible }
+.items li.dayhead { font-size:12px; font-weight:700; color:var(--faint); border-top:0; padding:6px 0 4px; break-after:avoid; cursor:default }
+.max-on .items li.dayhead { border-bottom:1px solid var(--line); margin-bottom:8px }
+.tabs { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 -6px }
+.tab { display:inline-flex; gap:8px; align-items:center; font-size:13px; padding:5px 10px; border-radius:9px; border:1px solid var(--line); background:var(--card); cursor:pointer; color:var(--soft) }
+.tab.on { color:var(--ink); border-color:color-mix(in srgb, var(--ink) 40%, transparent); font-weight:600 }
+.ticks .dtick i { display:block; font-style:normal; font-size:10px; opacity:.75 }
 .empty { padding:12px 18px; color:var(--soft); display:flex; gap:8px; align-items:center; border-style:dashed }
 .empty .i { color:var(--done) }
 .show-all { justify-self:start }
 /* hover only says that something can be clicked: the outline and the level colour belong to the selection */
-.nav:not(.on):hover, .tname:hover, .items li[data-go]:hover { background:color-mix(in srgb, var(--ink) 7%, transparent) }
+.step-row:hover, .nav:not(.on):hover, .tname:hover, .items li[data-go]:hover { background:color-mix(in srgb, var(--ink) 7%, transparent) }
 .items li[data-go] { cursor:pointer; border-radius:8px; margin-inline:-8px; padding-inline:8px }
 .items li[data-go]:hover .t { text-decoration:underline; text-underline-offset:3px; text-decoration-color:color-mix(in srgb, var(--ink) 35%, transparent) }
 .bar:hover { filter:brightness(1.3) } .bar.dim:hover { opacity:.7 }
@@ -886,8 +1023,81 @@ SCRIPT = """
   function mark() { document.querySelectorAll('[data-theme-set]').forEach(function (b) { b.setAttribute('aria-checked', String(b.getAttribute('data-theme-set') === current())); }); }
   try { var saved = localStorage.getItem('remind-me-theme'); if (saved === 'light' || saved === 'dark') { root.setAttribute('data-theme', saved); } } catch (ignored) { }
   mark();
+  // dates are written as YYYY-MM-DD and rewritten here in the page's language, built from their parts so no time zone moves the day
+  function localise(scope) {
+    var day, weekday, number;
+    try {
+      day = new Intl.DateTimeFormat(root.lang, { month: 'numeric', day: 'numeric' });
+      weekday = new Intl.DateTimeFormat(root.lang, { weekday: 'short' });
+      number = new Intl.DateTimeFormat(root.lang, { day: 'numeric' });
+    } catch (ignored) { return; }
+    var ticks = document.querySelectorAll('.ticks .dtick time');
+    scope.querySelectorAll('time[datetime]').forEach(function (t) {
+      var m = /^(\\d{4})-(\\d{2})-(\\d{2})(?:T(\\d{2}:\\d{2}))?$/.exec(t.getAttribute('datetime'));
+      if (!m) { return; }
+      var date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+      var tick = t.closest('.dtick');
+      if (tick) {
+        // a month's columns are narrow, so only a week's first day and the first column carry the month
+        var full = ticks.length <= 12 || tick.classList.contains('mon') || t === ticks[0];
+        t.textContent = (full ? day : number).format(date);
+        var name = document.createElement('i'); name.textContent = weekday.format(date); t.appendChild(name);
+      } else {
+        t.textContent = day.format(date) + (m[4] ? ' ' + m[4] : '');
+      }
+    });
+  }
+  localise(document);
+  // one card of a row takes the row, with a tab for each card of it; the day headings a range's items get are made here and removed on restore
+  function maximise(panel, kind) {
+    panel.querySelectorAll('.cards').forEach(function (box) {
+      var target = kind ? [].filter.call(box.children, function (c) { return c.getAttribute('data-kind') === kind; })[0] : null;
+      box.classList.toggle('maxed', !!target);
+      var tabs = box.previousElementSibling;
+      if (tabs && tabs.classList.contains('tabs')) { tabs.remove(); }
+      [].forEach.call(box.children, function (col) {
+        var on = col === target;
+        col.classList.toggle('max-on', on);
+        col.querySelectorAll('li.more').forEach(function (li) { li.hidden = !on; });
+        col.querySelectorAll('li.dayhead').forEach(function (li) { li.remove(); });
+        if (on && !col.querySelector('.groups')) {
+          var last = null;
+          col.querySelectorAll('.items > li[data-day]').forEach(function (li) {
+            var d = li.getAttribute('data-day');
+            if (d === last) { return; }
+            last = d;
+            var head = document.createElement('li'); head.className = 'dayhead'; head.setAttribute('aria-hidden', 'true');
+            var t = document.createElement('time'); t.setAttribute('datetime', d); t.textContent = d; head.appendChild(t);
+            li.parentNode.insertBefore(head, li); localise(head);
+          });
+        }
+      });
+      if (target) {
+        var row = document.createElement('div'); row.className = 'tabs';
+        [].forEach.call(box.children, function (col) {
+          if (!col.getAttribute('data-kind')) { return; }
+          var tab = document.createElement('button'); tab.type = 'button'; tab.className = 'tab' + (col === target ? ' on' : '');
+          tab.setAttribute('data-max-kind', col.getAttribute('data-kind'));
+          tab.innerHTML = col.querySelector('.kindhead .kind').outerHTML + ' ' + col.getAttribute('data-count');
+          row.appendChild(tab);
+        });
+        box.parentNode.insertBefore(row, box);
+      }
+    });
+  }
+  function sidePage(box, page) {
+    var pages = Number(box.getAttribute('data-pages'));
+    if (!(pages > 1)) { return; }
+    var size = Number(box.getAttribute('data-size')), total = Number(box.getAttribute('data-total'));
+    page = Math.min(Math.max(page, 0), pages - 1); box.setAttribute('data-page', page);
+    box.querySelectorAll('.nav.child').forEach(function (n) { n.hidden = Number(n.getAttribute('data-p')) !== page; });
+    var up = box.querySelector('[data-sstep="-1"]'), down = box.querySelector('[data-sstep="1"]');
+    up.hidden = page === 0; up.querySelector('span').textContent = box.getAttribute('data-newer').replace('{n}', page * size);
+    down.hidden = page === pages - 1; down.querySelector('span').textContent = box.getAttribute('data-older').replace('{n}', Math.max(total - (page + 1) * size, 0));
+  }
+  var shownKey = null;
   function route() {
-    var key = decodeURIComponent(location.hash.replace(/^#/, ''));
+    var parts = decodeURIComponent(location.hash.replace(/^#/, '')).split('~'), key = parts[0], kind = parts[1] || '';
     var panel = document.getElementById('p-' + key) || document.getElementById('p-');
     document.querySelectorAll('.panel').forEach(function (p) { p.hidden = p !== panel; });
     document.querySelectorAll('.trail-of').forEach(function (t) { t.hidden = t.getAttribute('data-for') !== panel.getAttribute('data-key'); });
@@ -898,9 +1108,17 @@ SCRIPT = """
       n.classList.toggle('on', go === panel.getAttribute('data-key'));
       n.classList.toggle('parent', level === 'session' && n.getAttribute('data-repo') === repo);
     });
-    document.querySelectorAll('[data-children]').forEach(function (c) { c.hidden = c.getAttribute('data-children') !== repo; });
+    document.querySelectorAll('[data-children]').forEach(function (c) {
+      c.hidden = c.getAttribute('data-children') !== repo;
+      // the line to the header starts at the selected session, so its page is the one shown
+      var on = c.querySelector('.nav.child.on'); sidePage(c, on ? Number(on.getAttribute('data-p')) : 0);
+    });
     document.title = panel.getAttribute('data-title');
+    maximise(panel, kind);
+    var moved = shownKey !== panel.getAttribute('data-key');
+    shownKey = panel.getAttribute('data-key');
     requestAnimationFrame(draw);
+    return moved;
   }
 
   // the lines are measured from the laid-out page, so they are drawn after layout and again whenever it changes
@@ -963,13 +1181,18 @@ SCRIPT = """
   // the item a click came from is marked only once its page is shown and scrolled to the top, or the reset would scroll it away again
   var pending = null;
   function arrive() { window.scrollTo(0, 0); if (pending) { point(pending); pending = null; } }
-  window.addEventListener('hashchange', function () { route(); arrive(); });
+  // maximising or restoring a card changes the anchor too, and keeps the reader where they are
+  window.addEventListener('hashchange', function () { if (route() || pending) { arrive(); } });
   route();
   function point(anchor) {
     var item = anchor && document.getElementById(anchor);
     if (!item) { return; }
-    // an item past a card's first ones is folded away, and a flash on it would show nothing
-    if (item.hidden) { var all = item.closest('.col').querySelector('button.show-all'); if (all) { all.click(); } }
+    // an item past a card's first ones is folded away, so its card is maximised in place before the flash, without a second navigation
+    if (item.hidden) {
+      var col = item.closest('.col'), panel = item.closest('.panel');
+      history.replaceState(null, '', '#' + panel.getAttribute('data-key') + '~' + col.getAttribute('data-kind'));
+      maximise(panel, col.getAttribute('data-kind'));
+    }
     item.classList.remove('flash'); void item.offsetWidth; item.classList.add('flash');
     item.scrollIntoView({ block: 'center' });
   }
@@ -986,8 +1209,14 @@ SCRIPT = """
   document.addEventListener('click', function (event) {
     var set = event.target.closest('[data-theme-set]');
     if (set) { root.setAttribute('data-theme', set.getAttribute('data-theme-set')); mark(); try { localStorage.setItem('remind-me-theme', current()); } catch (ignored) { } return; }
-    var all = event.target.closest('button.show-all');
-    if (all) { all.parentNode.querySelectorAll('li.more').forEach(function (li) { li.hidden = false; }); all.hidden = true; return; }
+    var step = event.target.closest('[data-sstep]');
+    if (step) { var box = step.closest('[data-children]'); sidePage(box, Number(box.getAttribute('data-page') || 0) + Number(step.getAttribute('data-sstep'))); return; }
+    var grow = event.target.closest('[data-max-kind]'), shrink = event.target.closest('[data-max-restore]');
+    if (grow || shrink) {
+      var here = document.querySelector('.panel:not([hidden])').getAttribute('data-key');
+      location.hash = grow ? here + '~' + grow.getAttribute('data-max-kind') : (here || '~');
+      return;
+    }
     var button = event.target.closest('button.copy');
     if (button) {
       var text = button.getAttribute('data-copy'), face = button.innerHTML;
@@ -1046,6 +1275,17 @@ def summary(report, digest, out):
              "%s · %d %s · %d %s · %s %s" % (span_text(digest), numbers["sessions"], labels["sessions"], numbers["repositories"],
                                            labels["repositories"], compact(numbers["tokens"]["charged"]), labels["tokens"])]
     for group in ordered(digest, report):
+        if VIEW["range"]:
+            # a month lists over a hundred sessions, so a range prints only what is open, each repository's latest few, and the page holds the rest
+            pairs = newest_first([(item, group, session, number) for session in group["sessions"]
+                                  for number, item in enumerate(body_of(report, session).get("open", []))])
+            if not pairs:
+                continue
+            lines += ["", "### %s" % name_of(group)]
+            lines += ["- %s: %s (%s)" % (labels[item["kind"]], item["text"], day_of(session["last"])[5:]) for item, _, session, _ in pairs[:PER_REPOSITORY]]
+            if len(pairs) > PER_REPOSITORY:
+                lines.append("- %s" % fill(labels["more_in_repository"], n=len(pairs) - PER_REPOSITORY, repository=name_of(group)))
+            continue
         lines += ["", "### %s" % name_of(group)]
         for session in group["sessions"]:
             body = body_of(report, session)
@@ -1063,18 +1303,28 @@ def main(argv=None):
     parser.add_argument("--digest", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--open", action="store_true", help="open the page in the default browser once written")
+    parser.add_argument("--fragments", nargs="+", default=[], help="files holding only sessions, folded into the report before it is checked")
     args = parser.parse_args(argv)
     with open(args.report, encoding="utf-8") as handle:
         report = json.load(handle)
     with open(args.digest, encoding="utf-8") as handle:
         digest = json.load(handle)
-    problems = problems_in(report, digest)
+    fragments = []
+    for path in args.fragments:
+        with open(path, encoding="utf-8") as handle:
+            fragments.append((os.path.basename(path), json.load(handle)))
+    report, problems = merged(report, fragments)
+    problems += problems_in(report, digest)
     sys.stdout.reconfigure(encoding="utf-8")
     if problems:
         print("the report does not match the schema, so nothing was written:")
         for problem in problems:
             print("- " + problem)
         return EXIT_SCHEMA
+    if fragments:
+        # the fragments are deleted with the digest, so the report kept on disk has to hold the sessions itself
+        with open(args.report, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(report, handle, ensure_ascii=False, indent=1)
     with open(args.out, "w", encoding="utf-8") as handle:
         handle.write(page(report, digest))
     _, ignored = marks(report, ordered(digest, report))

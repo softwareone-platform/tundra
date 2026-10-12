@@ -699,6 +699,76 @@ def test_subagent_usage_days():
                         "cache_creation_input_tokens": 0}})
 
 
+# ----- moment, in_runs: the span of a run of this skill ------------------------------
+
+def _at(clock, day=DAY):
+    return cl.moment(_ts(day, clock))
+
+
+def test_moment():
+    utc = cl.moment("2026-09-04T10:00:00.000Z")
+    check("a Z timestamp is an aware UTC datetime", (utc, utc.utcoffset()),
+          (datetime.datetime(2026, 9, 4, 10, 0, tzinfo=datetime.timezone.utc), datetime.timedelta(0)))
+    check("an offset timestamp is the same instant", cl.moment("2026-09-04T12:00:00+02:00"), utc)
+    naive = cl.moment("2026-09-04T10:00:00")
+    check("a timestamp with no offset is read as local time", (naive, naive.tzinfo is not None),
+          (datetime.datetime.fromisoformat("2026-09-04T10:00:00").astimezone(), True))
+    # an aware and a naive datetime cannot be compared at all, so this would raise if the local reading were missing
+    check("a timestamp with no offset compares with an aware one",
+          (naive < _at("10:01"), naive > _at("09:59")), (True, True))
+    check("unparseable text is None", cl.moment("yesterday"), None)
+    check("empty text is None", cl.moment(""), None)
+    check("None is None", cl.moment(None), None)
+
+
+def test_in_runs():
+    run = [[_at("10:00"), _at("11:00")]]
+    check("no moment is outside every run", cl.in_runs(None, [[_at("10:00"), None]]), False)
+    check("the start is inside", cl.in_runs(_at("10:00"), run), True)
+    check("a moment between start and end is inside", cl.in_runs(_at("10:30"), run), True)
+    check("the end is outside", cl.in_runs(_at("11:00"), run), False)
+    check("a moment before the start is outside", cl.in_runs(_at("09:59"), run), False)
+    check("a run with no end holds everything from its start on",
+          (cl.in_runs(_at("23:59"), [[_at("10:00"), None]]), cl.in_runs(_at("09:59"), [[_at("10:00"), None]])),
+          (True, False))
+    two = [[_at("10:00"), _at("11:00")], [_at("12:00"), _at("13:00")]]
+    check("with several runs a moment in the gap is outside", cl.in_runs(_at("11:30"), two), False)
+    check("with several runs a moment in the second is inside", cl.in_runs(_at("12:30"), two), True)
+    check("no runs is outside", cl.in_runs(_at("10:30"), []), False)
+
+
+def _sub(at, tokens, day=DAY):
+    """A subagent reply with its own message id, so every entry counts once and its tokens say which counted."""
+    return _assistant("sub", at=at, day=day, msg_id="sub-%s-%s" % (day, at), usage=_usage(tokens), model="claude-y")
+
+
+def _sub_usage(tokens):
+    if not tokens:
+        return {}
+    return {"claude-y": {"input_tokens": tokens, "output_tokens": 0, "cache_read_input_tokens": 0,
+                         "cache_creation_input_tokens": 0}}
+
+
+def test_subagent_usage_runs():
+    # each entry's tokens are a power of two, so the sum names exactly the entries that were counted
+    root = _projects({
+        "proj/s1.jsonl": [_user("x")],
+        "proj/s1/subagents/a1.jsonl": [_sub("09:00", 1), _sub("10:00", 2), _sub("10:30", 4), _sub("11:00", 8),
+                                       _sub("12:00", 16), _sub("10:30", 32, day=PREV)],
+    })
+    path = os.path.join(root, "proj", "s1.jsonl")
+    totals = {}
+    cl.subagent_usage(path, {DAY}, totals, [[_at("10:00"), _at("11:00")]])
+    check("a run's start and inside left out, before it, its end and after it counted, another day left out",
+          totals, _sub_usage(1 + 8 + 16))
+    totals = {}
+    cl.subagent_usage(path, {DAY}, totals, [[_at("10:00"), None]])
+    check("an open run leaves out everything from its start on", totals, _sub_usage(1))
+    totals = {}
+    cl.subagent_usage(path, {PREV, DAY}, totals, [[_at("10:00"), None]])
+    check("the day set still applies beside an open run", totals, _sub_usage(32 + 1))
+
+
 # ----- read_session: a run of this skill is skipped ---------------------------------
 
 def test_read_session_remind_me_run():
@@ -831,6 +901,117 @@ def test_read_session_remind_me_run_ended_before_the_range():
                         "cache_creation_input_tokens": 0}})
     check("the command that ended the run is outside the range", (session["prompts"], session["first"]),
           ([], DAY + " 00:05"))
+
+
+# ----- read_session: a run's subagents are left out too ------------------------------
+
+def _session_subagents(records, subagent, day=DAY):
+    root = _projects({"proj/s1.jsonl": records, "proj/s1/subagents/a1.jsonl": subagent})
+    days = {day} if isinstance(day, str) else set(day)
+    return cl.read_session(os.path.join(root, "proj", "s1.jsonl"), days)
+
+
+def test_read_session_run_subagents_ended():
+    for form, ending in (("prompt", "fix the tests"), ("command", "<command-name>/review</command-name>")):
+        session = _session_subagents([
+            _user("fix the build", at="09:00"),
+            _user("/remind-me", at="10:00"),
+            _assistant("The report.", at="10:30", msg_id="m1"),
+            _user(ending, at="11:00"),
+            _assistant("Done.", at="11:30", msg_id="m2"),
+        ], [_sub("09:30", 1), _sub("10:00", 2), _sub("10:30", 4), _sub("11:00", 8), _sub("11:30", 16)])
+        # the run ends at the entry that ends it, so a subagent reply at that moment is the session's again
+        check("ended by a %s: subagent usage from the run's start to its end left out, before and from the end counted"
+              % form, session["usage"], _sub_usage(1 + 8 + 16))
+
+
+def test_read_session_run_subagents_still_going():
+    session = _session_subagents([
+        _user("fix the build", at="09:00"),
+        _user("/remind-me", at="10:00"),
+        _assistant("The report.", at="10:30", msg_id="m1"),
+    ], [_sub("09:30", 1), _sub("10:30", 4), _sub("23:00", 8)])
+    check("a run still going at the end leaves out every later subagent reply", session["usage"], _sub_usage(1))
+
+
+def test_read_session_run_subagents_from_the_day_before():
+    session = _session_subagents([
+        _user("/remind-me", at="23:50", day=PREV),
+        _assistant("The report.", at="00:05", msg_id="m1"),
+        _user("fix the build", at="09:00"),
+    ], [_sub("23:55", 4, day=PREV), _sub("00:10", 1), _sub("09:30", 2)])
+    # the run started outside the range, and its readers still spill over into it
+    check("a run from the evening before leaves out its subagents' spill-over on the day", session["usage"],
+          _sub_usage(2))
+
+
+def test_read_session_run_subagents_second_invocation():
+    session = _session_subagents([
+        _user("fix the build", at="09:00"),
+        _user("/remind-me", at="10:00"),
+        _assistant("The report.", at="10:10", msg_id="m1"),
+        _user("/remind-me --from 2026-09-03", at="10:20"),
+        _user("fix the tests", at="11:00"),
+    ], [_sub("09:30", 8), _sub("10:05", 1), _sub("10:30", 2), _sub("11:00", 4)])
+    # a second invocation that moved the start would bring back the reply between the two
+    check("a second invocation inside a run keeps the first start", session["usage"], _sub_usage(8 + 4))
+
+
+def test_read_session_run_subagents_two_runs():
+    session = _session_subagents([
+        _user("/remind-me", at="09:00"),
+        _user("fix the build", at="10:00"),
+        _user("/remind-me", at="11:00"),
+        _user("fix the tests", at="12:00"),
+    ], [_sub("09:30", 1), _sub("10:30", 2), _sub("11:30", 4), _sub("12:30", 8)])
+    check("two runs both left out, the gap between them and after them counted", session["usage"], _sub_usage(2 + 8))
+
+
+def test_read_session_run_subagents_not_closed():
+    session = _session_subagents([
+        _user("fix the build", at="09:00"),
+        _user("/remind-me", at="10:00"),
+        _user([_tool_result("ok")], at="10:10"),
+        _user(cl.COMPACTION_PREFIX + ". Pending: push the branch.", at="10:20"),
+        _user("fix the tests", at="11:00"),
+    ], [_sub("10:15", 1), _sub("10:25", 2), _sub("11:30", 4)])
+    # neither a tool result nor a compaction summary is the person typing, so the run goes on past both
+    check("a tool result and a summary inside a run do not close it", session["usage"], _sub_usage(4))
+
+
+def test_read_session_run_subagents_start_unparseable():
+    session = _session_subagents([
+        _user("fix the build", at="09:00"),
+        _user("/remind-me", at="10:00", timestamp="garbage"),
+        _assistant("Want me to open !4001?", at="10:30", msg_id="m1", usage=_usage(100)),
+        _user("fix the tests", at="11:00"),
+        _assistant("Done.", at="11:30", msg_id="m2"),
+    ], [_sub("09:30", 1), _sub("10:30", 2), _sub("11:30", 4)])
+    # a run with no start cannot be placed, so its subagents count while its own entries are still skipped
+    check("a run whose start does not parse is not tracked for subagents", session["usage"], _sub_usage(1 + 2 + 4))
+    check("its main-session entries are still skipped",
+          (session["prompts"], session["questions"], session["pull_requests"], session["last_reply"]),
+          ([{"at": DAY + " 09:00", "kind": "prompt", "text": "fix the build"},
+            {"at": DAY + " 11:00", "kind": "prompt", "text": "fix the tests"}],
+           [], [], {"at": DAY + " 11:30", "text": "Done."}))
+
+
+def test_read_session_run_subagents_end_unparseable():
+    session = _session_subagents([
+        _user("fix the build", at="09:00"),
+        _user("/remind-me", at="10:00"),
+        _assistant("The report.", at="10:30", msg_id="m1"),
+        _user("fix the tests", at="11:00", timestamp="garbage"),
+        _assistant("Done.", at="11:30", msg_id="m2"),
+        _user("and the docs", at="12:00"),
+    ], [_sub("09:30", 1), _sub("10:30", 2), _sub("11:30", 4), _sub("12:30", 8)])
+    # an end that does not parse cannot be placed either, so the run is left open for its subagents
+    check("a run whose ending timestamp does not parse stays open for subagents", session["usage"], _sub_usage(1))
+    check("while the main session takes up again after the ending prompt",
+          (session["prompts"], session["last_reply"]),
+          ([{"at": DAY + " 09:00", "kind": "prompt", "text": "fix the build"},
+            {"at": DAY + " 12:00", "kind": "prompt", "text": "and the docs"}],
+           {"at": DAY + " 11:30", "text": "Done."}))
 
 
 # ----- collect: which sessions, grouped how --------------------------------------
@@ -1341,6 +1522,56 @@ def test_identities():
           (["ann@example.com", "bob@example.com"], [_AZ_ACCOUNT, _GH_USER]))
 
 
+# ----- split: one digest per repository ---------------------------------------------
+
+def _split_group(path, *sessions):
+    return {"path": path, "is_repository": False, "current": False,
+            "sessions": [{"id": "%s-%d" % (os.path.basename(path.rstrip("\\/")), n), "pull_requests": keys}
+                         for n, keys in enumerate(sessions)]}
+
+
+def test_split():
+    widgets = _split_group(os.path.join("src", "My Widgets") + os.sep,
+                           ["azure:1", "azure:2"], ["github:acme/widgets#3"])
+    # a non-ASCII prompt makes the byte count differ from the character count
+    widgets["sessions"][0]["prompts"] = [{"text": "\u7e41\u9ad4 prompt"}]
+    groups = [widgets,
+              _split_group("(unknown folder)", ["azure:2"]),
+              _split_group(os.path.join("x", "widgets"), []),
+              _split_group(os.path.join("y", "Widgets"), []),
+              _split_group(os.path.join("z", "WIDGETS"), []),
+              _split_group(os.path.join("w", "!!!"), []),
+              _split_group(os.path.join("v", "-.Dot  Name@@v2.-"), [])]
+    states = {"azure:1": {"status": "active"}, "azure:2": {"status": "completed"},
+              "github:acme/widgets#3": {"status": "merged"}, "azure:9": {"status": "unknown", "reason": "x"}}
+    shared = {"from": PREV, "to": DAY, "earliest": BEFORE, "generated": "2026-09-07T08:00:00+02:00",
+              "left_out": {"headless": 2}, "identities": ["ann@example.com"]}
+    digest = dict(shared, repositories=groups, pull_requests=states)
+    folder = os.path.join(_tempdir(), "split", "deep")
+    written = cl.split(digest, folder)
+
+    names = ["my-widgets.json", "unknown-folder.json", "widgets.json", "widgets-2.json", "widgets-3.json",
+             "repository.json", "dot-name-v2.json"]
+    check("one file per repository group, named from its folder, in the digest's order",
+          [name for name, _ in written], names)
+    check("the folder was created and holds only those files", sorted(os.listdir(folder)), sorted(names))
+    texts = {}
+    for name in names:
+        with open(os.path.join(folder, name), "rb") as f:
+            texts[name] = f.read()
+    check("each returned count is its file's length in bytes", [size for _, size in written],
+          [len(texts[name]) for name in names])
+    check("no file holds a carriage return", [name for name in names if b"\r" in texts[name]], [])
+
+    # a key named by two groups is in both files, and a key no group names is in none
+    pull_requests = [{"azure:1": states["azure:1"], "azure:2": states["azure:2"],
+                      "github:acme/widgets#3": states["github:acme/widgets#3"]},
+                     {"azure:2": states["azure:2"]}, {}, {}, {}, {}, {}]
+    for name, group, keys in zip(names, groups, pull_requests):
+        check("%s keeps the digest's range and identities, its own group and its own pull requests" % name,
+              json.loads(texts[name].decode("utf-8")), dict(shared, repositories=[group], pull_requests=keys))
+
+
 # ----- main: exit status and output ---------------------------------------------
 
 def _main(argv, today=None):
@@ -1459,6 +1690,68 @@ def test_main_progress_line():
         check("%s: the digest is written to --out" % label, (doc["from"], doc["to"]), want)
 
 
+def test_main_split_needs_out():
+    today = datetime.date.fromisoformat(TODAY)
+    folder = os.path.join(_tempdir(), "split")
+    for argv in (["--from", DAY, "--to", DAY], []):
+        label = " ".join(argv) or "no range"
+        code, out, err = _main(argv + ["--split", folder, "--no-live"], today=today)
+        check("%s: --split without --out exits 2" % label, code, 2)
+        check("%s: --split without --out says so" % label, err.rstrip().endswith("--split needs --out"), True)
+        check("%s: --split without --out prints nothing" % label, out, "")
+        check("%s: --split without --out writes no folder" % label, os.path.exists(folder), False)
+
+
+def test_main_split():
+    config = _tempdir()
+    parent = _tempdir()
+    alpha, beta = os.path.join(parent, "Alpha"), os.path.join(parent, "beta")
+    os.makedirs(alpha)
+    os.makedirs(beta)
+    projects = _projects({"proj/a.jsonl": [_user("alpha work", cwd=alpha)],
+                          "proj/b.jsonl": [_user("beta work", cwd=beta)]})
+    os.rename(projects, os.path.join(config, "projects"))
+    path = os.path.join(_tempdir(), "out", "digest.json")
+    folder = os.path.join(_tempdir(), "split")
+    os.environ["CLAUDE_CONFIG_DIR"] = config
+    try:
+        code, out, err = _main(["--from", DAY, "--to", DAY, "--out", path, "--split", folder, "--no-live"],
+                               today=datetime.date.fromisoformat(TODAY))
+    finally:
+        os.environ["CLAUDE_CONFIG_DIR"] = CONFIG
+    with open(path, "rb") as f:
+        raw = f.read()
+    doc = json.loads(raw.decode("utf-8"))
+    check("--split with sessions exits 0 with nothing on stderr", (code, err), (0, ""))
+    check("the digest's order is the folders' order", [g["path"] for g in doc["repositories"]], [alpha, beta])
+    # the digest is written with LF, so the byte count the progress line names is the file's size
+    check("the --out digest holds no carriage return", b"\r" in raw, False)
+    sizes = [os.path.getsize(os.path.join(folder, name)) for name in ("alpha.json", "beta.json")]
+    check("the progress line, then one line per file in the digest's order", out.splitlines(),
+          ["%s: 2 sessions in 2 folders, 0 headless runs left out, %d bytes -> %s" % (DAY, len(raw), path),
+           "  %d bytes -> %s" % (sizes[0], os.path.join(folder, "alpha.json")),
+           "  %d bytes -> %s" % (sizes[1], os.path.join(folder, "beta.json"))])
+    ids = []
+    for name in ("alpha.json", "beta.json"):
+        with open(os.path.join(folder, name), encoding="utf-8") as f:
+            ids.append([s["id"] for g in json.load(f)["repositories"] for s in g["sessions"]])
+    check("each split file holds its own folder's session", ids, [["a"], ["b"]])
+
+
+def test_main_split_no_sessions():
+    # CLAUDE_CONFIG_DIR holds no projects folder, so nothing is found
+    path = os.path.join(_tempdir(), "out", "digest.json")
+    folder = os.path.join(_tempdir(), "split")
+    code, out, err = _main(["--from", DAY, "--to", DAY, "--out", path, "--split", folder, "--no-live"],
+                           today=datetime.date.fromisoformat(TODAY))
+    check("--split with no sessions exits 3", code, 3)
+    check("only the progress line is printed", out.splitlines(),
+          ["%s: 0 sessions in 0 folders, 0 headless runs left out, %d bytes -> %s"
+           % (DAY, os.path.getsize(path), path)])
+    check("no split file is written", os.listdir(folder) if os.path.isdir(folder) else [], [])
+    check("stderr names the day", err, "no sessions on %s\n" % DAY)
+
+
 def test_non_ascii_on_cp1252_console():
     text = "\u7e41\u9ad4\u4e2d\u6587 prompt"
     config = _tempdir()
@@ -1509,6 +1802,12 @@ _TESTS = (test_isolation, test_local_time, test_days_in, test_default_day, test_
           test_collect_range, test_collect_earliest, test_collect_remind_me_run_dropped,
           test_collect_live_pull_requests_new_range,
           test_main_range_validation, test_main_default_day_today, test_main_progress_line,
+          test_moment, test_in_runs, test_subagent_usage_runs,
+          test_read_session_run_subagents_ended, test_read_session_run_subagents_still_going,
+          test_read_session_run_subagents_from_the_day_before, test_read_session_run_subagents_second_invocation,
+          test_read_session_run_subagents_two_runs, test_read_session_run_subagents_not_closed,
+          test_read_session_run_subagents_start_unparseable, test_read_session_run_subagents_end_unparseable,
+          test_split, test_main_split_needs_out, test_main_split, test_main_split_no_sessions,
           test_no_cli_escaped)
 
 

@@ -125,7 +125,7 @@ def _kind_section(page, kind):
     """The overview's card of open items of one kind, or None when the overview has none."""
     overview = _panel(page, "p-")
     # the twin cards of what happened carry "twin" before the kind, so they never match here
-    found = re.search(r'<section class="card col %s( clamp)?">' % kind, overview)
+    found = re.search(r'<section class="card col %s( clamp)?"(?: data-kind="[^"]*" data-count="\d+")?>' % kind, overview)
     if found is None:
         return None
     return overview[found.start():overview.index("</section>", found.start())]
@@ -475,27 +475,35 @@ def _many(kind, count):
 
 def test_overview_folds_past_limit():
     check("limit is ten", render.OVERVIEW_LIMIT, 10)
+    check("the overview shows three per repository", render.PER_REPOSITORY, 3)
     report = _report({"s1": _body(open_items=_many("action", 12) + _many("decision", 10) + _many("question", 3))})
     page = render.page(report, _digest())
     action = _kind_section(page, "action")
-    check("the overview's action card clamps", action.startswith('<section class="card col action clamp">'), True)
-    check("ten actions visible", action.count('<li data-go='), 10)
-    check("two actions folded", action.count('<li class="more" hidden data-go='), 2)
-    check("the folded ones are the last two",
-          re.findall(r'<li class="more" hidden data-go=[^>]*><div class="t">(action item \d\d)</div>', action),
-          ["action item 11", "action item 12"])
-    check("the visible ones are the first ten in order",
+    check("the overview's action card clamps",
+          action.startswith('<section class="card col action clamp" data-kind="action" data-count="12">'), True)
+    check("three actions visible", action.count('<li data-go='), 3)
+    check("nine actions beyond the repository's first three", action.count('<li class="beyond" data-go='), 9)
+    # newest first, and within one session the last the model listed comes first
+    check("the visible ones are the last three listed, newest first",
           re.findall(r'<li data-go=[^>]*><div class="t">(action item \d\d)</div>', action),
-          ["action item %02d" % n for n in range(1, 11)])
-    check("one show-all button carrying the total", action.count("show-all"), 1)
-    check("show-all names the total", '<button type="button" class="btn ghost show-all">[show_all] (12)</button>' in action, True)
+          ["action item 12", "action item 11", "action item 10"])
+    check("the ones beyond follow in the same order",
+          re.findall(r'<li class="beyond" data-go=[^>]*><div class="t">(action item \d\d)</div>', action),
+          ["action item %02d" % n for n in range(9, 0, -1)])
+    check("a link points to the rest on the repository's page",
+          '<button type="button" class="btn quiet more-link" data-go="r-repo-a">[more_in_repository 9 repo-a]</button>' in action, True)
+    check("no show-all on the overview", "show-all" in action, False)
     check("heading counts the total",
-          re.search(r'<h3 class="kindhead"><span class="kind"><svg class="i"[^>]*>(?:(?!</svg>).)*</svg>\[action\]</span> 12</h3>',
-                    action) is not None, True)
-    decision = _kind_section(page, "decision")
-    check("exactly at the limit nothing folds", "more" in decision, False)
-    check("exactly at the limit no button", "show-all" in decision, False)
-    check("under the limit no button", "show-all" in _kind_section(page, "question"), False)
+          re.search(r'<h3 class="kindhead"><span class="kind"><svg class="i"[^>]*>(?:(?!</svg>).)*</svg>\[action\]</span> 12'
+                    r'<button type="button" class="maxbtn grow" data-max-kind="action"', action) is not None, True)
+    question = _kind_section(page, "question")
+    check("exactly at three per repository nothing goes beyond", "beyond" in question, False)
+    check("exactly at three per repository no link to the rest", "more-link" in question, False)
+    # the limit of ten still holds below the overview
+    cards = dict(_cards(_panel(page, "p-r-repo-a")))
+    check("exactly at the limit nothing folds", 'class="more"' in cards["decision"], False)
+    check("exactly at the limit no button", "show-all" in cards["decision"], False)
+    check("under the limit no button", "show-all" in cards["question"], False)
 
 
 def test_overview_empty():
@@ -507,7 +515,7 @@ def test_overview_empty():
         check("a %s card with nothing open" % kind, section is not None, True)
         if section is None:
             continue
-        check("the %s card counts zero" % kind, ("[%s]</span> 0</h3>" % kind) in section, True)
+        check("the %s card counts zero" % kind, ('[%s]</span> 0<button type="button" class="maxbtn grow"' % kind) in section, True)
         check("the %s card lists nothing" % kind, "<li" in section, False)
     check("no what-happened lane when nothing happened", '<details class="folded">' in overview, False)
     check("nothing open is not said on the overview", "[nothing_open]" in overview, False)
@@ -1017,7 +1025,8 @@ def test_tile_is_the_same_everywhere():
         check("%s in the sidebar" % slug, (tile + '<span class="nm">%s</span>' % slug) in side, True)
         check("%s in the timeline" % slug, (tile + '<span class="nm">%s</span>' % slug) in timeline, True)
         check("%s in the trail" % slug, (tile + slug) in trail, True)
-        check("%s in an item's where-line" % slug, ('<div class="where">%s%s</div>' % (tile, slug)) in overview, True)
+        check("%s in the overview's repository block" % slug,
+              ('<div class="ghead">%s<span class="nm">%s</span><b>1</b></div>' % (tile, slug)) in overview, True)
         check("%s in the repository header" % slug, tile in _head(_panel(page, "p-r-" + slug)), True)
     # one emoji tile and one initial tile, so no place drew the other form
     check("never a mix of emoji and initial", sorted(set(re.findall(_TILE, page))), [("", "B"), (" emoji", mark)])
@@ -1101,7 +1110,7 @@ _ICON = r'<svg class="i"[^>]*>(?:(?!</svg>).)*</svg>'
 
 def _cards(text):
     """Every card of items in a stretch of the page, as (classes, content) in page order."""
-    return re.findall(r'<section class="card col ([^"]+)">(.*?)</section>', text)
+    return re.findall(r'<section class="card col ([^"]+)"(?: data-kind="[^"]*" data-count="\d+")?>(.*?)</section>', text)
 
 
 def _lanes_of(panel):
@@ -1116,7 +1125,8 @@ def test_happened_cards():
     page = render.page(_report({"s1": body}), _digest())
     for panel_id in ("p-r-repo-a", "p-s-s1"):
         _, happened = _lanes_of(_panel(page, panel_id))
-        heads = [(cls, re.match(r'<h3 class="kindhead"><span class="kind">(%s)\[(\w+)\]</span> (\d+)</h3>' % _ICON, content).groups())
+        heads = [(cls, re.match(r'<h3 class="kindhead"><span class="kind">(%s)\[(\w+)\]</span> (\d+)<button type="button" class="maxbtn grow"' % _ICON,
+                                content).groups())
                  for cls, content in _cards(happened)]
         check("on %s decided, done, found, each with its open twin's icon" % panel_id, heads,
               [("twin decision", (render.icon("decision"), "decided", "2")), ("twin action", (render.icon("action"), "done", "1")),
@@ -1209,35 +1219,45 @@ def test_levels_fold_past_limit():
         cards = dict(_cards(_panel(page, panel_id)))
         action, done = cards["action"], cards["twin action"]
         check("on %s ten actions visible" % panel_id, action.count("<li " + attribute), 10)
-        check("on %s the last two actions folded" % panel_id,
-              re.findall(r'<li class="more" hidden %s[^>]*><div class="t">([^<]*)</div>' % attribute, action), ["action item 11", "action item 12"])
+        # newest first, so the first two the model listed are the ones folded
+        check("on %s the first two actions folded" % panel_id,
+              re.findall(r'<li class="more" hidden %s[^>]*><div class="t">([^<]*)</div>' % attribute, action), ["action item 02", "action item 01"])
         check("on %s the actions' button counts all" % panel_id,
-              '<button type="button" class="btn ghost show-all">[show_all] (12)</button>' in action, True)
+              '<button type="button" class="btn ghost show-all" data-max-kind="action">[show_all] (12)</button>' in action, True)
         check("on %s ten done lines visible" % panel_id, done.count("<li " + attribute), 10)
-        check("on %s the eleventh done line folded" % panel_id,
-              re.findall(r'<li class="more" hidden %s[^>]*><div class="t">([^<]*)</div>' % attribute, done), ["done line 11"])
+        check("on %s the first done line folded" % panel_id,
+              re.findall(r'<li class="more" hidden %s[^>]*><div class="t">([^<]*)</div>' % attribute, done), ["done line 01"])
         check("on %s the done button counts all" % panel_id,
-              '<button type="button" class="btn ghost show-all">[show_all] (11)</button>' in done, True)
+              '<button type="button" class="btn ghost show-all" data-max-kind="done">[show_all] (11)</button>' in done, True)
     overview = _panel(page, "p-")
     folded = dict(_cards(overview[overview.index('<details class="folded">'):]))
-    check("the overview's folded done card folds too", folded["twin action"].count('<li class="more" hidden data-go='), 1)
+    # by hand: 11 done lines, three shown for the repository and 11 - 3 = 8 beyond
+    check("the overview's folded done card shows the repository's first three", folded["twin action"].count('<li data-go='), 3)
+    check("the overview's folded done card keeps the rest beyond", folded["twin action"].count('<li class="beyond" data-go='), 8)
+    check("the overview's folded done card links to the rest",
+          '<button type="button" class="btn quiet more-link" data-go="r-repo-a">[more_in_repository 8 repo-a]</button>' in folded["twin action"], True)
 
 
 def test_folded_links_land_on_folded_items():
     # a link to an item past a card's first ones lands on an item folded on its session panel too,
-    # and that card's own button is what opens it, so the markup must pair each folded target with one button
+    # and the page opens it by maximising the card by its data-kind, so each folded target must sit in one card
+    # whose own maximise button names that kind
     page = render.page(_report({"s1": _body(open_items=_many("action", 12))}), _digest())
     session = _panel(page, "p-s-s1")
     folded_ids = re.findall(r'<li class="more" hidden id="([^"]+)">', session)
-    check("the session panel folds the last two actions", folded_ids, ["i-s1-o10", "i-s1-o11"])
-    for panel_id in ("p-", "p-r-repo-a"):
-        links = re.findall(r'<li class="more" [^>]*data-item="([^"]+)"', _panel(page, panel_id))
-        check("on %s each folded link targets a folded item on the session panel" % panel_id, links, folded_ids)
+    check("the session panel folds the first two actions, newest first", folded_ids, ["i-s1-o1", "i-s1-o0"])
+    links = re.findall(r'<li class="more" [^>]*data-item="([^"]+)"', _panel(page, "p-r-repo-a"))
+    check("on p-r-repo-a each folded link targets a folded item on the session panel", links, folded_ids)
+    overview = _panel(page, "p-")
+    check("on p- no item is folded", '<li class="more"' in overview, False)
+    beyond = re.findall(r'<li class="beyond" [^>]*data-item="([^"]+)"', overview)
+    check("on p- the folded targets are among the items past the repository's first three", set(folded_ids) <= set(beyond), True)
+    kinded = re.findall(r'<section class="card col [^"]+" data-kind="([^"]*)" data-count="\d+">(.*?)</section>', session)
     for anchor in folded_ids:
-        holders = [content for _, content in _cards(session) if '<li class="more" hidden id="%s">' % anchor in content]
+        holders = [(kind, content) for kind, content in kinded if '<li class="more" hidden id="%s">' % anchor in content]
         check("%s sits in one card" % anchor, len(holders), 1)
-        check("%s shares its card with one show-all button" % anchor,
-              [holder.count('class="btn ghost show-all"') for holder in holders], [1])
+        check("%s shares its card with a maximise button of the card's kind" % anchor,
+              [content.count('<button type="button" class="maxbtn grow" data-max-kind="%s"' % kind) for kind, content in holders], [1])
 
 
 # ----- panel keys ----------------------------------------------------------------
@@ -1572,7 +1592,7 @@ def test_one_day_timeline_markup():
 
 
 def _sidebar_child(page, sid):
-    return re.search(r'<button type="button" class="nav child" data-go="s-%s" title="([^"]*)">(.*?)</button>' % sid, page)
+    return re.search(r'<button type="button" class="nav child" data-go="s-%s"(?: data-p="\d+"(?: hidden)?)? title="([^"]*)">(.*?)</button>' % sid, page)
 
 
 def test_range_text_and_attributes():
@@ -1650,16 +1670,22 @@ def test_schema_lists_every_label():
 
 def test_summary_on_a_range():
     out = os.path.join(tempfile.mkdtemp(), "report.html")
-    # the view left by a one-day page, so only summary() setting it itself gives the dates
-    got = _in_view(None, lambda: render.summary(_range_report(), _range_digest(), out))
+    report = _report({"a1": _body(open_items=[_item("action", "a1 first"), _item("question", "a1 second")]),
+                      "a2": _body(open_items=[_item("decision", "a2 first"), _item("action", "a2 second")]),
+                      "b1": _body(open_items=[_item("question", "b1 only")])}, **{"from": _FROM, "to": _TO})
+    # the view left by a one-day page, so only summary() setting it itself gives the range's form
+    got = _in_view(None, lambda: render.summary(report, _range_digest(), out))
     lines = got.splitlines()
     # by hand: three sessions of 10 + 5 charged each, in two repositories
     check("the figures line opens with the range",
           lines[2], "%s \u00b7 3 [sessions] \u00b7 2 [repositories] \u00b7 45 [tokens]" % _SPAN)
-    check("each session line shows both dates",
-          [line for line in lines if line.startswith("- ")],
-          ["- **10-02 09:15\u201310-02 10:00** topic of the session", "- **10-05 08:40\u201310-06 11:20** topic of the session",
-           "- **10-08 14:00\u201310-08 14:05** topic of the session"])
+    # by hand: repo-a has four open and comes first; a2 ended 10-06 after a1's 10-02, and within a session the last listed comes first,
+    # so its newest three are a2 second, a2 first and a1 second, with 4 - 3 = 1 left; repo-b's one ended 10-08
+    check("each repository lists its newest three open items with their session's last day, then the rest as a count",
+          lines[3:-4], ["", "### repo-a", "- [action]: a2 second (10-06)", "- [decision]: a2 first (10-06)", "- [question]: a1 second (10-02)",
+                        "- [more_in_repository 1 repo-a]", "", "### repo-b", "- [question]: b1 only (10-08)"])
+    quiet = _in_view(None, lambda: render.summary(_range_report(), _range_digest(), out))
+    check("a repository with nothing open is left out", [line for line in quiet.splitlines() if line.startswith("### ")], [])
 
 
 def test_view_does_not_leak():
@@ -1680,6 +1706,381 @@ def test_view_does_not_leak():
     got = render.summary(_report(), _digest(), "x.html")
     check("a one-day summary right after a range page shows times alone",
           [line for line in got.splitlines() if line.startswith("- ")], ["- **09:00\u201310:00** topic of the session"])
+
+
+# ----- fragments folded into the report ------------------------------------------
+
+def test_merged_without_fragments():
+    report = _report()
+    for name, fragments in (("an empty list", []), ("None", None)):
+        got, problems = render.merged(report, fragments)
+        check("with %s of fragments the report itself comes back" % name, got is report, True)
+        check("with %s of fragments nothing is a problem" % name, problems, [])
+    for name, value in (("a list", []), ("a string", "day"), ("null", None)):
+        got, problems = render.merged(value, [("repo-a.json", {"sessions": {"s1": _body()}})])
+        check("a report that is %s comes back as it is" % name, got is value, True)
+        check("a report that is %s gives no fragment problem" % name, problems, [])
+
+
+def test_merged_folds_each_fragment():
+    report = _report({"s1": _body(topics=["one"])})
+    before = copy.deepcopy(report)
+    fragments = [("repo-a.json", {"sessions": {"s2": _body(topics=["two"])}}),
+                 ("repo-b.json", {"sessions": {"s3": _body(topics=["three"])}})]
+    got, problems = render.merged(report, fragments)
+    check("well-formed fragments carry no problem", problems, [])
+    check("the report's own sessions are kept and each fragment's folded in after them",
+          list(got["sessions"].items()), [("s1", _body(topics=["one"])), ("s2", _body(topics=["two"])), ("s3", _body(topics=["three"]))])
+    check("every other field is the report's",
+          {key: value for key, value in got.items() if key != "sessions"}, {key: value for key, value in before.items() if key != "sessions"})
+    check("the report passed in is not changed", report, before)
+    # the owner's ruling: with fragments given, a report without a sessions object takes the fragments' sessions alone
+    for name, value in (("absent", None), ("a list", ["s1"]), ("a string", "s1")):
+        report = _report()
+        if value is None:
+            del report["sessions"]
+        else:
+            report["sessions"] = value
+        got, problems = render.merged(report, [("repo-a.json", {"sessions": {"s1": _body()}})])
+        check("a report whose sessions is %s takes the fragments' sessions" % name, got["sessions"], {"s1": _body()})
+        check("a report whose sessions is %s gives no fragment problem" % name, problems, [])
+
+
+def test_merged_refuses_a_malformed_fragment():
+    want = ["fragment bad.json must be an object with a sessions object"]
+    good = ("good.json", {"sessions": {"s2": _body()}})
+    for name, fragment in (("a list", []), ("a string", "x"), ("null", None), ("an object without sessions", {}),
+                           ("an object whose sessions is a list", {"sessions": ["s2"]}),
+                           ("an object whose sessions is null", {"sessions": None})):
+        got, problems = render.merged(_report(), [("bad.json", fragment), good])
+        check("a fragment that is %s is named" % name, problems, want)
+        check("a fragment that is %s is skipped and the next still folded in" % name, sorted(got["sessions"]), ["s1", "s2"])
+    # with no sessions object to read, its other fields are not named on top
+    _, problems = render.merged(_report(), [("bad.json", {"sessions": [], "headline": "x"})])
+    check("a field beside a sessions that is not an object is not named too", problems, want)
+
+
+def test_merged_names_unknown_fragment_fields():
+    fragment = {"sessions": {"s2": _body()}, "labels": {}, "headline": "from the fragment"}
+    got, problems = render.merged(_report(), [("repo-b.json", fragment)])
+    check("each extra field is named, in the fragment's order", problems,
+          ["fragment repo-b.json: unknown field labels", "fragment repo-b.json: unknown field headline"])
+    check("its sessions are still folded in", sorted(got["sessions"]), ["s1", "s2"])
+    check("an extra field does not reach the report", got["headline"], "the headline")
+
+
+def test_merged_refuses_a_session_twice():
+    fragments = [("repo-a.json", {"sessions": {"s2": _body(topics=["from a"])}}),
+                 ("repo-b.json", {"sessions": {"s2": _body(topics=["from b"])}})]
+    _, problems = render.merged(_report({}), fragments)
+    check("one id in two fragments is named", problems, ["session s2 is in more than one fragment"])
+    _, problems = render.merged(_report({"s1": _body()}), [("repo-a.json", {"sessions": {"s1": _body()}})])
+    check("a fragment id already in the report is named", problems, ["session s1 is in more than one fragment"])
+
+
+def _fragment_files(fragments):
+    """Each fragment written as JSON into a folder of its own, so a line naming one shows whether the name is the file's basename."""
+    folder = os.path.join(tempfile.mkdtemp(), "readers")
+    os.makedirs(folder)
+    paths = []
+    for name, fragment in fragments:
+        path = os.path.join(folder, name)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(fragment, f)
+        paths.append(path)
+    return paths
+
+
+def _report_file(out_path):
+    """The report file _main wrote beside the page."""
+    return os.path.join(os.path.dirname(out_path), "report.json")
+
+
+def test_main_folds_fragments():
+    digest = _digest([_group_of("repo-a", [_session("s1")]), _group_of("repo-b", [_session("s2", cwd=_folder("repo-b"))])])
+    one = _body(topics=["from repo-a"], open_items=[_item("action", "do a")])
+    two = _body(topics=["from repo-b"], done=["did b"])
+    paths = _fragment_files([("repo-a.json", {"sessions": {"s1": one}}), ("repo-b.json", {"sessions": {"s2": two}})])
+    code, out, out_path = _main(_report({}), digest, ["--fragments"] + paths)
+    whole = _report({"s1": one, "s2": two})
+    check("exits 0", code, 0)
+    check("page written", os.path.isfile(out_path), True)
+    with open(out_path, encoding="utf-8") as f:
+        written = f.read()
+    check("the page is the one built from the report holding every session", written, render.page(whole, digest))
+    check("stdout is that report's summary", out, render.summary(whole, digest, out_path) + "\n")
+    # read as bytes, so a CRLF on any platform would show
+    with open(_report_file(out_path), "rb") as f:
+        raw = f.read()
+    check("the report file now holds every session", json.loads(raw.decode("utf-8")), whole)
+    check("it is JSON with an indent of one and LF line ends", raw.decode("utf-8"), json.dumps(whole, indent=1))
+    check("no CRLF in it", b"\r\n" in raw, False)
+
+
+def test_main_refuses_bad_fragments():
+    report = _report({})
+    paths = _fragment_files([("bad.json", []), ("repo-a.json", {"sessions": {"zz": _body()}, "headline": "x"})])
+    code, out, out_path = _main(report, _digest(), ["--fragments"] + paths)
+    check("exits 2", code, render.EXIT_SCHEMA)
+    check("the fragments' problems come first, each named by its file's basename, then the report's", out.splitlines(),
+          [SCHEMA_HEADER, "- fragment bad.json must be an object with a sessions object",
+           "- fragment repo-a.json: unknown field headline",
+           "- session zz is not in the digest",
+           "- session s1 from the digest has no entry in the report"])
+    check("no page written", os.path.exists(out_path), False)
+    with open(_report_file(out_path), encoding="utf-8") as f:
+        check("the report file is left as it was", f.read(), json.dumps(report))
+
+
+def test_main_leaves_the_report_without_fragments():
+    report = _report()
+    code, _, out_path = _main(report, _digest())
+    check("exits 0", code, 0)
+    with open(_report_file(out_path), encoding="utf-8") as f:
+        check("without --fragments the report file is not rewritten", f.read(), json.dumps(report))
+
+
+# ----- the latest item on top ----------------------------------------------------
+
+def test_newest_first():
+    early = _session("e", first="08:00", last="10:00")
+    late = _session("l", first="09:00", last="11:00")
+    pairs = [("e0", None, early, 0), ("e1", None, early, 1), ("l0", None, late, 0), ("l1", None, late, 1)]
+    check("the latest session first, and within a session the last the model listed first",
+          [pair[0] for pair in render.newest_first(pairs)], ["l1", "l0", "e1", "e0"])
+    long_one = _session("g", first="07:00", last="12:00")
+    short = _session("s", first="09:00", last="10:00")
+    check("by the session's last, not its first",
+          [pair[0] for pair in render.newest_first([("s0", None, short, 0), ("g0", None, long_one, 0)])], ["g0", "s0"])
+    # by clock alone 23:00 would come before 08:00, so only the date in minutes() puts the next morning first
+    night = _session("n", first="2026-10-05 22:00", last="2026-10-05 23:00")
+    morning = _session("m", first="2026-10-06 07:00", last="2026-10-06 08:00")
+    check("a later day comes first whatever the clock",
+          [pair[0] for pair in render.newest_first([("n0", None, night, 0), ("m0", None, morning, 0)])], ["m0", "n0"])
+    a = _session("a", first="09:00", last="10:00")
+    b = _session("b", first="09:30", last="10:00")
+    # by hand: the keys are (minutes of 10:00, id, index), so reversed b1, b0, a1, a0
+    check("two sessions ending in one minute keep each session's items together",
+          [pair[0] for pair in render.newest_first([("a0", None, a, 0), ("b0", None, b, 0), ("a1", None, a, 1), ("b1", None, b, 1)])],
+          ["b1", "b0", "a1", "a0"])
+
+
+def test_dated():
+    session = _session("x", first="2026-10-05 09:00", last="2026-10-06 11:20")
+    where = '<div class="where">W</div>'
+    check("on one day the where-line is unchanged", _in_view(None, lambda: render.dated(where, session)), where)
+    check("on one day an empty where-line stays empty", _in_view(None, lambda: render.dated("", session)), "")
+    axis = render.day_axis(_range_digest())
+    chip = '<span class="date"><time datetime="2026-10-06">10-06</time></span>'
+    check("on a range an empty where-line becomes the day of the session's last",
+          _in_view(axis, lambda: render.dated("", session)), '<div class="where">%s</div>' % chip)
+    check("on a range the day and a separator open a where-line",
+          _in_view(axis, lambda: render.dated(where, session)), '<div class="where">%s<span class="sep">\u00b7</span>W</div>' % chip)
+
+
+def _linked(text):
+    """Each item that leads to its session in a stretch of the page, as (session, data-day, text, what follows the text), in page order."""
+    return re.findall(r'<li(?: class="[^"]*")?(?: hidden)? data-go="s-(\w+)" data-item="[^"]*"(?: data-day="([^"]*)")? tabindex="0">'
+                      r'<div class="t">([^<]*)</div>(.*?)</li>', text)
+
+
+def _day_chip(day):
+    return '<div class="where"><span class="date"><time datetime="%s">%s</time></span></div>' % (day, day[5:])
+
+
+def test_range_items_newest_first_with_their_day():
+    report = _report({"a1": _body(open_items=[_item("action", "a1 x")]),
+                      "a2": _body(open_items=[_item("action", "a2 x"), _item("action", "a2 y")], done=["a2 done"]),
+                      "b1": _body(open_items=[_item("action", "b1 x")])}, **{"from": _FROM, "to": _TO})
+    page = render.page(report, _range_digest())
+    # by hand: a2 ran 10-05 to 10-06 and a1 on 10-02, so a2's items lead repo-a, the last listed first, each dated by its session's last day
+    a2_day, a1_day, b1_day = "2026-10-06", "2026-10-02", "2026-10-08"
+    check("the overview lists each repository's items newest first, each with its day",
+          _linked(_kind_section(page, "action")),
+          [("a2", a2_day, "a2 y", _day_chip(a2_day)), ("a2", a2_day, "a2 x", _day_chip(a2_day)),
+           ("a1", a1_day, "a1 x", _day_chip(a1_day)), ("b1", b1_day, "b1 x", _day_chip(b1_day))])
+    cards = dict(_cards(_panel(page, "p-r-repo-a")))
+    check("the repository panel lists its items newest first, each with its day", _linked(cards["action"]),
+          [("a2", a2_day, "a2 y", _day_chip(a2_day)), ("a2", a2_day, "a2 x", _day_chip(a2_day)), ("a1", a1_day, "a1 x", _day_chip(a1_day))])
+    check("a line of what happened on the repository panel carries its day too", _linked(cards["twin action"]),
+          [("a2", a2_day, "a2 done", _day_chip(a2_day))])
+    session = _panel(page, "p-s-a2")
+    check("the session panel lists its items newest first, with no day",
+          re.findall(r'<li id="([^"]*)"><div class="t">([^<]*)</div>(.*?)</li>', session),
+          [("i-a2-o1", "a2 y", ""), ("i-a2-o0", "a2 x", ""), ("i-a2-d0", "a2 done", "")])
+    check("the session panel carries no date chip", 'class="date"' in session, False)
+    check("the session panel carries no data-day", "data-day" in session, False)
+
+    one_day = _markup(render.page(_report({"s1": _body(open_items=[_item("action", "x")], done=["y"])}), _digest()))
+    check("a one-day page carries no date chip", 'class="date"' in one_day, False)
+    check("a one-day page carries no data-day", "data-day" in one_day, False)
+
+
+# ----- the overview grouped by repository ----------------------------------------
+
+def _blocks(card):
+    """Each repository block of an overview card, as (tile, name, count, its items, what follows them)."""
+    return re.findall(r'<div class="group"><div class="ghead">(<span class="tile[^"]*" aria-hidden="true">[^<]*</span>)<span class="nm">([^<]*)</span>'
+                      r'<b>(\d+)</b></div><ul class="items">(.*?)</ul>(.*?)</div>', card)
+
+
+def _texts(items, beyond=False):
+    return re.findall(r'<li%s data-go=[^>]*><div class="t">([^<]*)</div>' % (' class="beyond"' if beyond else ""), items)
+
+
+def test_overview_groups_by_repository():
+    # listed in the digest against the order ordered() gives, so blocks in ordered() order cannot come from the digest's
+    digest = _digest([_group_of("gamma", [_session("g1", cwd=_folder("gamma"))]),
+                      _group_of("beta", [_session("b1", cwd=_folder("beta"))]),
+                      _group_of("Alpha Repo", [_session("a1", cwd=_folder("Alpha Repo"))])])
+    report = _report({"a1": _body(open_items=_many("action", 5)),
+                      "b1": _body(open_items=_many("action", 2) + _many("question", 1), done=["beta done"]),
+                      "g1": _body(done=["gamma done %d" % n for n in range(1, 5)])})
+    page = render.page(report, digest)
+
+    action = _kind_section(page, "action")
+    blocks = _blocks(action)
+    # by hand: Alpha Repo has five open, beta three and gamma none, and gamma has no action
+    check("a block per repository with actions, in ordered() order, headed by its tile, name and count",
+          [(tile, name, count) for tile, name, count, _, _ in blocks], [(_tile("A"), "Alpha Repo", "5"), (_tile("B"), "beta", "2")])
+    if len(blocks) == 2:
+        check("the first three of a repository are plain, newest first", _texts(blocks[0][3]), ["action item 05", "action item 04", "action item 03"])
+        check("the rest are beyond", _texts(blocks[0][3], beyond=True), ["action item 02", "action item 01"])
+        # the slug leads the link and the name fills the label, so a name with a space tells them apart
+        check("a link to the rest names their count and the repository",
+              blocks[0][4], '<button type="button" class="btn quiet more-link" data-go="r-alpha-repo">[more_in_repository 2 Alpha Repo]</button>')
+        check("a repository with three or fewer has nothing beyond", "beyond" in blocks[1][3], False)
+        check("and no link to the rest", blocks[1][4], "")
+    # by hand: 5 + 2
+    check("the card counts every repository's items",
+          action.startswith('<section class="card col action clamp" data-kind="action" data-count="7"><h3 class="kindhead">'), True)
+    check("the heading counts them too", '[action]</span> 7<button type="button" class="maxbtn grow"' in action, True)
+    check("the question card has a block for beta alone",
+          [(name, count) for _, name, count, _, _ in _blocks(_kind_section(page, "question"))], [("beta", "1")])
+    decision = _kind_section(page, "decision")
+    check("a kind with no items has no block", "ghead" in decision, False)
+    check("and an empty list in their place", '<div class="groups"><ul class="items"></ul></div>' in decision, True)
+
+    overview = _panel(page, "p-")
+    done = dict(_cards(overview[overview.index('<details class="folded">'):]))["twin action"]
+    blocks = _blocks(done)
+    check("the folded lane's done card is grouped the same way, in ordered() order",
+          [(tile, name, count) for tile, name, count, _, _ in blocks], [(_tile("B"), "beta", "1"), (_tile("G"), "gamma", "4")])
+    if len(blocks) == 2:
+        check("its first three of gamma are plain, newest first", _texts(blocks[1][3]), ["gamma done 4", "gamma done 3", "gamma done 2"])
+        check("its rest of gamma are beyond", _texts(blocks[1][3], beyond=True), ["gamma done 1"])
+        check("its link to the rest of gamma",
+              blocks[1][4], '<button type="button" class="btn quiet more-link" data-go="r-gamma">[more_in_repository 1 gamma]</button>')
+    # by hand: 1 + 4
+    check("the folded done card's heading counts every repository's lines", '[done]</span> 5<button type="button" class="maxbtn grow"' in done, True)
+    check("the folded done card's count is the total",
+          '<section class="card col twin action" data-kind="done" data-count="5">' in overview, True)
+
+
+# ----- the sidebar's pages -------------------------------------------------------
+
+def _side_box(count, labels=None):
+    """The sidebar's session list of a repository holding count sessions, as its attributes, its children, its step rows and its markup.
+    The sessions start a minute apart and sit in the digest out of order, and the first to start ends last,
+    so only an order by start time puts it at the bottom."""
+    sessions = [_session("s%02d" % n, first="09:%02d" % n, last="11:00" if n == 0 else "09:%02d" % n) for n in range(count)]
+    # 7 shares no factor with any count used here, so this only reorders
+    shuffled = sorted(sessions, key=lambda session: int(session["id"][1:]) * 7 % count)
+    report = _report({session["id"]: _body() for session in sessions}, labels=labels or _labels())
+    page = render.page(report, _digest([_group_of("repo-a", shuffled)]))
+    box = re.search(r'<div class="children" data-children="repo-a"([^>]*)>(.*?)</div>', page)
+    attributes = dict(re.findall(r' (data-[\w-]+)="([^"]*)"', box.group(1)))
+    children = re.findall(r'<button type="button" class="nav child" data-go="s-(\w+)" data-p="(\d+)"( hidden)? title=', box.group(2))
+    steps = re.findall(r'<button type="button" class="step-row" data-sstep="(-?1)"( hidden)?>%s<span>([^<]*)</span></button>' % _ICON, box.group(2))
+    return attributes, children, steps, box.group(2)
+
+
+def test_sidebar_one_page():
+    check("a page holds at most eight", render.SIDE_PAGE, 8)
+    attributes, children, steps, markup = _side_box(8)
+    check("eight sessions are one page of eight, its attributes there all the same", attributes,
+          {"data-pages": "1", "data-size": "8", "data-total": "8", "data-newer": "[newer {n}]", "data-older": "[older {n}]"})
+    check("every child on page 0, none hidden, newest first by start time", children, [("s%02d" % n, "0", "") for n in range(7, -1, -1)])
+    check("no step rows", steps, [])
+    check("no step-row at all", "step-row" in markup, False)
+
+
+def test_sidebar_pages():
+    attributes, children, steps, _ = _side_box(9)
+    # by hand: 9 over 8 is 2 pages, and 9 over 2 rounded up is 5 a page
+    check("nine sessions are two pages of five", (attributes["data-pages"], attributes["data-size"], attributes["data-total"]), ("2", "5", "9"))
+    check("five on page 0, four on page 1", [page for _, page, _ in children], ["0"] * 5 + ["1"] * 4)
+    check("the rows to turn the page, the newer one hidden, the older one counting the 4 left", steps, [("-1", " hidden", ""), ("1", "", "[older 4]")])
+
+    labels = _labels()
+    labels["newer"] = 'newer & "{n}"'
+    labels["older"] = "<older {n}>"
+    attributes, children, steps, markup = _side_box(26, labels)
+    # by hand: 26 over 8 is 4 pages, and 26 over 4 rounded up is 7 a page, so 7, 7, 7 and 26 - 21 = 5
+    check("twenty-six sessions are four pages of seven, the labels escaped", attributes,
+          {"data-pages": "4", "data-size": "7", "data-total": "26", "data-newer": "newer &amp; &quot;{n}&quot;", "data-older": "&lt;older {n}&gt;"})
+    check("children newest first by start time", [sid for sid, _, _ in children], ["s%02d" % n for n in range(25, -1, -1)])
+    check("pages of 7, 7, 7 and 5", [page for _, page, _ in children], ["0"] * 7 + ["1"] * 7 + ["2"] * 7 + ["3"] * 5)
+    check("children past the first page hidden", [hidden for _, _, hidden in children], [""] * 7 + [" hidden"] * 19)
+    # by hand: 26 - 7 = 19 older than the first page
+    check("the rows to turn the page", steps, [("-1", " hidden", ""), ("1", "", "&lt;older 19&gt;")])
+    check("the newer row is above the children", markup.startswith('<button type="button" class="step-row" data-sstep="-1" hidden>'), True)
+    check("the older row is below them", markup.endswith('<span>&lt;older 19&gt;</span></button>'), True)
+
+
+# ----- labels for the overview's links, the side pages and the card buttons -----
+
+def test_paging_and_maximise_labels():
+    for label, value, lost in (("more_in_repository", "{n} more", "{repository}"), ("more_in_repository", "more in {repository}", "{n}"),
+                               ("more_in_repository", "more", "{n}, {repository}"), ("newer", "newer", "{n}"), ("older", "older", "{n}")):
+        labels = _labels()
+        labels[label] = value
+        check("label %s as %r names %s" % (label, value, lost), render.problems_in(_report(labels=labels), _digest()),
+              ["label %s must keep %s" % (label, lost)])
+    labels = _labels()
+    del labels["maximise"]
+    del labels["restore"]
+    check("maximise and restore absent are named as missing", render.problems_in(_report(labels=labels), _digest()),
+          ["labels missing: maximise, restore"])
+
+
+# ----- card markup ---------------------------------------------------------------
+
+def _card_heads(panel):
+    """Each card of a panel as (data-kind, data-count, its heading's content), in page order."""
+    return re.findall(r'<section class="card col [^"]+" data-kind="(\w+)" data-count="(\d+)"><h3 class="kindhead">(.*?)</h3>', panel)
+
+
+def test_card_kinds_and_counts():
+    body = dict(_body(open_items=_many("decision", 2) + _many("action", 1) + _many("question", 3), done=["d1", "d2"]),
+                decided=["c1"], found=["f1", "f2", "f3", "f4"])
+    page = render.page(_report({"s1": body}), _digest())
+    want = [("decision", "2"), ("action", "1"), ("question", "3"), ("decided", "1"), ("done", "2"), ("found", "4")]
+    for panel_id in ("p-", "p-r-repo-a", "p-s-s1"):
+        check("on %s every card names its kind and count" % panel_id, [(kind, count) for kind, count, _ in _card_heads(_panel(page, panel_id))], want)
+    check("no card on the page lacks them", page.count('<section class="card col'),
+          len(re.findall(r'<section class="card col [^"]+" data-kind="\w+" data-count="\d+">', page)))
+
+
+def test_card_heading_buttons():
+    labels = _labels()
+    labels["maximise"] = 'grow <"all">'
+    labels["restore"] = "back & forth"
+    body = dict(_body(open_items=[_item("decision", "x")], done=["d"]), found=["f"])
+    page = render.page(_report({"s1": body}, labels=labels), _digest())
+    grow, shrink = "grow &lt;&quot;all&quot;&gt;", "back &amp; forth"
+    # the overview keeps a card for every open kind, the levels below only those with items
+    for panel_id, kinds in (("p-", ["decision", "action", "question", "done", "found"]),
+                            ("p-r-repo-a", ["decision", "done", "found"]), ("p-s-s1", ["decision", "done", "found"])):
+        heads = _card_heads(_panel(page, panel_id))
+        check("on %s the cards are the expected kinds" % panel_id, [kind for kind, _, _ in heads], kinds)
+        for kind, _, head in heads:
+            want = ('<button type="button" class="maxbtn grow" data-max-kind="%s" title="%s" aria-label="%s">%s</button>'
+                    '<button type="button" class="maxbtn shrink" data-max-restore title="%s" aria-label="%s">%s</button>'
+                    % (kind, grow, grow, render.icon("maximise"), shrink, shrink, render.icon("restore")))
+            check("on %s the %s heading ends with maximise then restore, labels escaped" % (panel_id, kind), head.endswith(want), True)
+    check("no raw maximise label", 'grow <"all">' in page, False)
+    check("no raw restore label", "back & forth" in page, False)
 
 
 _TESTS = (test_valid_report_has_no_problems, test_missing_top_level_fields, test_range_not_the_digests,
@@ -1713,7 +2114,12 @@ _TESTS = (test_valid_report_has_no_problems, test_missing_top_level_fields, test
           test_length_across_days, test_day_axis, test_day_axis_reads_days, test_position, test_rows_for_on_a_range,
           test_range_timeline_markup, test_one_day_timeline_markup, test_range_text_and_attributes, test_range_headings,
           test_one_day_heading, test_level_range_required, test_schema_lists_every_label,
-          test_summary_on_a_range, test_view_does_not_leak)
+          test_summary_on_a_range, test_view_does_not_leak,
+          test_merged_without_fragments, test_merged_folds_each_fragment, test_merged_refuses_a_malformed_fragment,
+          test_merged_names_unknown_fragment_fields, test_merged_refuses_a_session_twice, test_main_folds_fragments,
+          test_main_refuses_bad_fragments, test_main_leaves_the_report_without_fragments, test_newest_first, test_dated,
+          test_range_items_newest_first_with_their_day, test_overview_groups_by_repository, test_sidebar_one_page,
+          test_sidebar_pages, test_paging_and_maximise_labels, test_card_kinds_and_counts, test_card_heading_buttons)
 
 
 def _run_all():

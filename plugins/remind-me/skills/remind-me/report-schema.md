@@ -69,6 +69,11 @@ Every label is required, in the report's language. A label that holds a number o
 | `action` | do |
 | `question` | find out |
 | `show_all` | Show all |
+| `more_in_repository` | {n} more in {repository} |
+| `newer` | {n} newer |
+| `older` | {n} older |
+| `maximise` | Show this card alone |
+| `restore` | Show all cards |
 | `running` | running |
 | `running_count` | {n} running |
 | `cannot_resume` | Running, so it cannot be resumed from here |
