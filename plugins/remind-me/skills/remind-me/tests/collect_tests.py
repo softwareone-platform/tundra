@@ -1547,6 +1547,8 @@ def test_split():
     shared = {"from": PREV, "to": DAY, "earliest": BEFORE, "generated": "2026-09-07T08:00:00+02:00",
               "left_out": {"headless": 2}, "identities": ["ann@example.com"]}
     digest = dict(shared, repositories=groups, pull_requests=states)
+    # split names the caller's groups in place, so the expected files are built from copies taken before the call
+    before = [dict(group) for group in groups]
     folder = os.path.join(_tempdir(), "split", "deep")
     written = cl.split(digest, folder)
 
@@ -1554,6 +1556,8 @@ def test_split():
              "repository.json", "dot-name-v2.json"]
     check("one file per repository group, named from its folder, in the digest's order",
           [name for name, _ in written], names)
+    check("each group of the whole digest names its own file, in the digest's order",
+          [group.get("split") for group in digest["repositories"]], names)
     check("the folder was created and holds only those files", sorted(os.listdir(folder)), sorted(names))
     texts = {}
     for name in names:
@@ -1567,9 +1571,51 @@ def test_split():
     pull_requests = [{"azure:1": states["azure:1"], "azure:2": states["azure:2"],
                       "github:acme/widgets#3": states["github:acme/widgets#3"]},
                      {"azure:2": states["azure:2"]}, {}, {}, {}, {}, {}]
-    for name, group, keys in zip(names, groups, pull_requests):
-        check("%s keeps the digest's range and identities, its own group and its own pull requests" % name,
-              json.loads(texts[name].decode("utf-8")), dict(shared, repositories=[group], pull_requests=keys))
+    for name, group, keys in zip(names, before, pull_requests):
+        check("%s keeps the digest's range and identities, its own group naming itself and its own pull requests" % name,
+              json.loads(texts[name].decode("utf-8")),
+              dict(shared, repositories=[dict(group, split=name)], pull_requests=keys))
+
+
+# ----- name_splits: the file name each repository's digest is written to ----------
+
+def _names(*paths):
+    """A digest holding one session-less group per path, in the order given."""
+    return {"repositories": [_split_group(path) for path in paths]}
+
+
+def test_name_splits():
+    digest = _names(os.path.join("x", "widgets"), os.path.join("y", "Gadgets"), os.path.join("z", "widgets"))
+    check("name_splits names the groups in place and returns nothing", cl.name_splits(digest), None)
+    check("every group is named from its folder, a repeat suffixed, in the digest's order",
+          [group["split"] for group in digest["repositories"]], ["widgets.json", "gadgets.json", "widgets-2.json"])
+    # a second call must not count the first call's names as taken
+    cl.name_splits(digest)
+    check("naming the same digest twice gives the same names",
+          [group["split"] for group in digest["repositories"]], ["widgets.json", "gadgets.json", "widgets-2.json"])
+
+    empty = {"repositories": [], "pull_requests": {}}
+    cl.name_splits(empty)
+    check("a digest with no repositories is left as it was", empty, {"repositories": [], "pull_requests": {}})
+
+    stale = _names(os.path.join("x", "alpha"), os.path.join("y", "beta"))
+    stale["repositories"][0]["split"] = "beta.json"
+    stale["repositories"][1]["split"] = "old.json"
+    cl.name_splits(stale)
+    check("a name already on a group is replaced by its own folder's",
+          [group["split"] for group in stale["repositories"]], ["alpha.json", "beta.json"])
+
+
+def test_name_splits_suffix_collision():
+    # a folder already named like a generated suffix takes that name first, so the repeat has to skip it
+    for paths, want in (((("x", "widgets"), ("y", "widgets"), ("z", "widgets-2")),
+                         ["widgets.json", "widgets-2.json", "widgets-2-2.json"]),
+                        ((("x", "widgets-2"), ("y", "widgets"), ("z", "widgets")),
+                         ["widgets-2.json", "widgets.json", "widgets-3.json"])):
+        digest = _names(*[os.path.join(*parts) for parts in paths])
+        cl.name_splits(digest)
+        label = ", ".join(parts[1] for parts in paths)
+        check("%s are named %s" % (label, ", ".join(want)), [group["split"] for group in digest["repositories"]], want)
 
 
 # ----- main: exit status and output ---------------------------------------------
@@ -1750,6 +1796,90 @@ def test_main_split_no_sessions():
            % (DAY, os.path.getsize(path), path)])
     check("no split file is written", os.listdir(folder) if os.path.isdir(folder) else [], [])
     check("stderr names the day", err, "no sessions on %s\n" % DAY)
+
+
+def _main_sessions(cwds, argv):
+    """Run main on DAY over one session per folder in cwds, named a, b, c... in that order."""
+    config = _tempdir()
+    for cwd in cwds:
+        os.makedirs(cwd)
+    files = {"proj/%s.jsonl" % chr(ord("a") + n): [_user("work", cwd=cwd)] for n, cwd in enumerate(cwds)}
+    os.rename(_projects(files), os.path.join(config, "projects"))
+    os.environ["CLAUDE_CONFIG_DIR"] = config
+    try:
+        return _main(["--from", DAY, "--to", DAY, "--no-live"] + argv, today=datetime.date.fromisoformat(TODAY))
+    finally:
+        os.environ["CLAUDE_CONFIG_DIR"] = CONFIG
+
+
+def _split_targets(out):
+    """The paths the progress lines after the first one say a split file was written to."""
+    return [line.split(" -> ", 1)[1] for line in out.splitlines()[1:]]
+
+
+def _split_sessions(folder, name):
+    with open(os.path.join(folder, name), encoding="utf-8") as f:
+        part = json.load(f)
+    return [s["id"] for g in part["repositories"] for s in g["sessions"]], [g.get("split") for g in part["repositories"]]
+
+
+def test_main_split_names_shared():
+    parent = _tempdir()
+    # the digest sorts by path, and an upper-case letter sorts before a lower-case one
+    cwds = [os.path.join(parent, name) for name in ("Alpha", "My Widgets", "beta")]
+    path = os.path.join(_tempdir(), "out", "digest.json")
+    folder = os.path.join(_tempdir(), "split")
+    code, out, err = _main_sessions(cwds, ["--out", path, "--split", folder])
+    with open(path, encoding="utf-8") as f:
+        doc = json.load(f)
+    named = [g.get("split") for g in doc["repositories"]]
+    check("--split with sessions exits 0 with nothing on stderr", (code, err), (0, ""))
+    check("fixture: the digest's order is the folders' order", [g["path"] for g in doc["repositories"]], cwds)
+    check("the whole digest names each group's file, in the digest's order", named,
+          ["alpha.json", "my-widgets.json", "beta.json"])
+    check("the split folder holds exactly the files the whole digest names", sorted(os.listdir(folder)), sorted(named))
+    check("the progress lines name the files the whole digest names, in its order", _split_targets(out),
+          [os.path.join(folder, name) for name in named])
+    check("each split file holds its own session, its group naming that file",
+          [_split_sessions(folder, name) for name in named],
+          [(["a"], ["alpha.json"]), (["b"], ["my-widgets.json"]), (["c"], ["beta.json"])])
+
+
+def test_main_split_repeated_names():
+    # two folders with one name in different parents, which would otherwise share one split file
+    parent = _tempdir()
+    cwds = [os.path.join(parent, "a", "tundra"), os.path.join(parent, "b", "Tundra")]
+    path = os.path.join(_tempdir(), "out", "digest.json")
+    folder = os.path.join(_tempdir(), "split")
+    code, out, err = _main_sessions(cwds, ["--out", path, "--split", folder])
+    with open(path, encoding="utf-8") as f:
+        doc = json.load(f)
+    check("--split with sessions exits 0 with nothing on stderr", (code, err), (0, ""))
+    check("fixture: the digest's order is the folders' order", [g["path"] for g in doc["repositories"]], cwds)
+    check("the whole digest names tundra.json, then tundra-2.json", [g.get("split") for g in doc["repositories"]],
+          ["tundra.json", "tundra-2.json"])
+    check("the split folder holds both files", sorted(os.listdir(folder)), ["tundra-2.json", "tundra.json"])
+    check("each split file holds its own session",
+          [_split_sessions(folder, name)[0] for name in ("tundra.json", "tundra-2.json")], [["a"], ["b"]])
+    check("the progress lines name the same two files, in the digest's order", _split_targets(out),
+          [os.path.join(folder, "tundra.json"), os.path.join(folder, "tundra-2.json")])
+
+
+def test_main_no_split_no_names():
+    parent = _tempdir()
+    path = os.path.join(_tempdir(), "out", "digest.json")
+    code, _, err = _main_sessions([os.path.join(parent, "alpha")], ["--out", path])
+    with open(path, encoding="utf-8") as f:
+        doc = json.load(f)
+    check("--out without --split exits 0 with nothing on stderr", (code, err), (0, ""))
+    check("--out without --split: no group of the digest carries a split name",
+          [("split" in g, len(g["sessions"])) for g in doc["repositories"]], [(False, 1)])
+
+    code, out, err = _main_sessions([os.path.join(_tempdir(), "beta")], [])
+    doc = json.loads(out)
+    check("stdout without --split exits 0 with nothing on stderr", (code, err), (0, ""))
+    check("stdout without --split: no group of the digest carries a split name",
+          [("split" in g, len(g["sessions"])) for g in doc["repositories"]], [(False, 1)])
 
 
 def test_non_ascii_on_cp1252_console():
@@ -1956,6 +2086,8 @@ _TESTS = (test_isolation, test_local_time, test_days_in, test_default_day, test_
           test_read_session_run_subagents_two_runs, test_read_session_run_subagents_not_closed,
           test_read_session_run_subagents_start_unparseable, test_read_session_run_subagents_end_unparseable,
           test_split, test_main_split_needs_out, test_main_split, test_main_split_no_sessions,
+          test_name_splits, test_name_splits_suffix_collision, test_main_split_names_shared,
+          test_main_split_repeated_names, test_main_no_split_no_names,
           test_openable, test_openable_used_by_readers, test_subagent_usage_listed, test_long_path_transcript,
           test_no_cli_escaped)
 

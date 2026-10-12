@@ -598,27 +598,40 @@ def collect(first=None, last=None, live=True, root=None, today=None):
     return digest
 
 
-def split(digest, folder):
-    """One digest per repository, each with the whole digest's range and identities and only its own pull requests.
+def name_splits(digest):
+    """Give each repository the file name its own digest is written to, in the digest's order.
 
-    A long range is read by one reader per repository, and an item is settled within its repository,
-    so each reader needs everything about its repository and nothing about the others.
-    Returns (file name, bytes) per repository, in the digest's order.
+    The name goes into the whole digest too,
+    so a renderer problem about a session no reader judged can name the reader's file,
+    which two folders with the same name would otherwise share.
     """
-    os.makedirs(folder, exist_ok=True)
-    written, taken = [], set()
+    taken = set()
     for group in digest["repositories"]:
         base = re.sub(r"[^\w.-]+", "-", os.path.basename(group["path"].rstrip("\\/")).lower()).strip("-.") or "repository"
         name, number = base, 2
         while name in taken:
             name, number = "%s-%d" % (base, number), number + 1
         taken.add(name)
+        group["split"] = name + ".json"
+
+
+def split(digest, folder):
+    """One digest per repository, each with the whole digest's range and identities and only its own pull requests.
+
+    Several repositories are read by one reader each, and an item is settled within its repository,
+    so each reader needs everything about its repository and nothing about the others.
+    Returns (file name, bytes) per repository, in the digest's order.
+    """
+    os.makedirs(folder, exist_ok=True)
+    name_splits(digest)
+    written = []
+    for group in digest["repositories"]:
         keys = {key for session in group["sessions"] for key in session["pull_requests"]}
         part = dict(digest, repositories=[group], pull_requests={key: state for key, state in digest["pull_requests"].items() if key in keys})
         text = json.dumps(part, ensure_ascii=False, indent=1)
-        with open(os.path.join(folder, name + ".json"), "w", encoding="utf-8", newline="\n") as handle:
+        with open(os.path.join(folder, group["split"]), "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text)
-        written.append((name + ".json", len(text.encode("utf-8"))))
+        written.append((group["split"], len(text.encode("utf-8"))))
     return written
 
 
@@ -662,6 +675,9 @@ def main(argv=None, today=None):
             parser.error("a range holds at most %d days, both ends included" % MAX_DAYS)
         args.first, args.last = first.isoformat(), last.isoformat()
     digest = collect(args.first, args.last, live=not args.no_live, today=today.isoformat())
+    if args.split:
+        # named before the whole digest is written, so it carries the same names as the split folder
+        name_splits(digest)
     text = json.dumps(digest, ensure_ascii=False, indent=1)
     if args.out:
         os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)

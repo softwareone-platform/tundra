@@ -111,8 +111,13 @@ def problems_in(report, digest):
                 found.append("session %s: an open item has no text" % session_id)
             if "detail" in item and not isinstance(item["detail"], str):
                 found.append("session %s: an open item's detail must be a string" % session_id)
+    # a session no reader judged is in no fragment, so the file its reader was given is what says which reader to send again,
+    # and with one repository there was no reader, so its name stands in
+    readers = len(digest.get("repositories", [])) > 1
+    home = {session["id"]: "in %s" % group["split"] if readers and group.get("split") else "repository %s" % name_of(group)
+            for group in digest.get("repositories", []) for session in group["sessions"]}
     for session_id in sorted(known - set(report["sessions"])):
-        found.append("session %s from the digest has no entry in the report" % session_id)
+        found.append("session %s from the digest has no entry in the report (%s)" % (session_id, home[session_id]))
     # one line per problem, however many items share it
     return list(dict.fromkeys(found))
 
@@ -1338,11 +1343,17 @@ def main(argv=None):
         report = json.load(handle)
     with open(args.digest, encoding="utf-8") as handle:
         digest = json.load(handle)
-    fragments = []
+    fragments, unread = [], []
     for path in args.fragments:
-        with open(path, encoding="utf-8") as handle:
-            fragments.append((os.path.basename(path), json.load(handle)))
+        # a reader that wrote broken JSON, or nothing, is sent again like any other fragment problem, so it must not stop the run
+        try:
+            # a file written with a byte order mark reads the same, since a reader sent again would write it the same way
+            with open(path, encoding="utf-8-sig") as handle:
+                fragments.append((os.path.basename(path), json.load(handle)))
+        except (OSError, ValueError) as error:
+            unread.append("fragment %s could not be read: %s" % (os.path.basename(path), error))
     report, problems = merged(report, fragments)
+    problems = unread + problems
     problems += located(problems_in(report, digest), fragments)
     sys.stdout.reconfigure(encoding="utf-8")
     if problems:

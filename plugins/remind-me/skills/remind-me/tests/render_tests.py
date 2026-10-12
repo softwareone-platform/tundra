@@ -219,7 +219,44 @@ def test_session_not_in_digest():
 def test_digest_session_without_entry():
     digest = _digest([_group_of("repo-a", [_session("s1"), _session("s2")])])
     check("a digest session missing from the report is named", render.problems_in(_report(), digest),
-          ["session s2 from the digest has no entry in the report"])
+          ["session s2 from the digest has no entry in the report (repository repo-a)"])
+
+
+def test_missing_session_in_one_repository_names_the_repository():
+    # one repository means no reader was sent, so a split it happens to carry names nothing to send again
+    digest = _digest([_group_of("repo-a", [_session("s1"), _session("s2")], split="repo-a.json")])
+    check("with one repository the missing session names the repository, not its split file",
+          render.problems_in(_report(), digest),
+          ["session s2 from the digest has no entry in the report (repository repo-a)"])
+
+
+def test_missing_session_names_its_split_file():
+    digest = _digest([_group_of("repo-a", [_session("s1")], split="repo-a.json"),
+                      _group_of("repo-b", [_session("s2", cwd=_folder("repo-b"))], split="repo-b.json")])
+    check("a session missing from the second repository names the file its reader was given",
+          render.problems_in(_report(), digest),
+          ["session s2 from the digest has no entry in the report (in repo-b.json)"])
+
+
+def test_missing_session_names_the_split_file_of_folders_sharing_a_name():
+    one, two = _folder(os.path.join("x", "tundra")), _folder(os.path.join("y", "tundra"))
+    digest = _digest([_group_of(os.path.join("x", "tundra"), [_session("s1", cwd=one), _session("s2", cwd=one)], split="tundra.json"),
+                      _group_of(os.path.join("y", "tundra"), [_session("s3", cwd=two), _session("s4", cwd=two)], split="tundra-2.json")])
+    check("the two folders share the name a repository line would show",
+          [render.name_of(group) for group in digest["repositories"]], ["tundra", "tundra"])
+    check("each missing session names its own reader's split file, which the folder name alone cannot",
+          render.problems_in(_report({"s1": _body(), "s3": _body()}), digest),
+          ["session s2 from the digest has no entry in the report (in tundra.json)",
+           "session s4 from the digest has no entry in the report (in tundra-2.json)"])
+
+
+def test_missing_session_without_a_split_names_the_repository():
+    digest = _digest([_group_of("repo-a", [_session("s1")], split="repo-a.json"),
+                      _group_of("repo-b", [_session("s2", cwd=_folder("repo-b"))])])
+    check("among several repositories a group with no split falls back to its name, and one with a split keeps it",
+          render.problems_in(_report({}), digest),
+          ["session s1 from the digest has no entry in the report (in repo-a.json)",
+           "session s2 from the digest has no entry in the report (repository repo-b)"])
 
 
 def test_session_without_topics():
@@ -1942,7 +1979,7 @@ def test_main_refuses_bad_fragments():
           [SCHEMA_HEADER, "- fragment bad.json must be an object with a sessions object",
            "- fragment repo-a.json: unknown field headline",
            "- fragment repo-a.json: session zz is not in the digest",
-           "- session s1 from the digest has no entry in the report"])
+           "- session s1 from the digest has no entry in the report (repository repo-a)"])
     check("no page written", os.path.exists(out_path), False)
     with open(_report_file(out_path), encoding="utf-8") as f:
         check("the report file is left as it was", f.read(), json.dumps(report))
@@ -1965,6 +2002,85 @@ def test_main_leaves_the_report_without_fragments():
     check("exits 0", code, 0)
     with open(_report_file(out_path), encoding="utf-8") as f:
         check("without --fragments the report file is not rewritten", f.read(), json.dumps(report))
+
+
+def _raw_fragment(name, data):
+    """One fragment written as these exact bytes into a folder of its own, for a file no reader should have written."""
+    folder = os.path.join(tempfile.mkdtemp(), "readers")
+    os.makedirs(folder)
+    path = os.path.join(folder, name)
+    with open(path, "wb") as f:
+        f.write(data)
+    return path
+
+
+def _check_unread(label, name, report, run, rest):
+    """The run refused with the could-not-be-read line for name first, then exactly rest, and wrote nothing."""
+    code, out, out_path = run
+    lines = out.splitlines()
+    prefix = "- fragment %s could not be read: " % name
+    check("%s: exits 2" % label, code, render.EXIT_SCHEMA)
+    check("%s: the header comes first" % label, lines[:1], [SCHEMA_HEADER])
+    # the error text is Python's own, and for a missing file it holds the absolute path, so only its prefix is fixed
+    check("%s: the could-not-be-read line, named by the file's basename, comes before every other problem" % label,
+          len(lines) > 1 and lines[1].startswith(prefix), True)
+    check("%s: the reason follows the prefix" % label, len(lines) > 1 and len(lines[1]) > len(prefix), True)
+    check("%s: the other problems follow it" % label, lines[2:], rest)
+    check("%s: no page written" % label, os.path.exists(out_path), False)
+    with open(_report_file(out_path), encoding="utf-8") as f:
+        check("%s: the report file is left as it was" % label, f.read(), json.dumps(report))
+
+
+def test_main_refuses_a_fragment_that_is_not_json():
+    missing = ["- session s1 from the digest has no entry in the report (repository repo-a)"]
+    for label, data in (("a lone brace", b"{"), ("an empty file", b"")):
+        report = _report({})
+        path = _raw_fragment("bad.json", data)
+        _check_unread(label, "bad.json", report, _main(report, _digest(), ["--fragments", path]), missing)
+
+
+def test_main_refuses_a_fragment_that_does_not_exist():
+    report = _report({})
+    path = os.path.join(tempfile.mkdtemp(), "readers", "gone.json")
+    _check_unread("a missing file", "gone.json", report, _main(report, _digest(), ["--fragments", path]),
+                  ["- session s1 from the digest has no entry in the report (repository repo-a)"])
+
+
+def test_main_refuses_a_fragment_that_is_not_utf8():
+    report = _report({})
+    path = _raw_fragment("bad.json", b"\xff\xfe{")
+    _check_unread("bytes that are not UTF-8", "bad.json", report, _main(report, _digest(), ["--fragments", path]),
+                  ["- session s1 from the digest has no entry in the report (repository repo-a)"])
+
+
+def test_main_reads_the_other_fragments_past_an_unreadable_one():
+    digest = _digest([_group_of("repo-a", [_session("s1")], split="repo-a.json"),
+                      _group_of("repo-b", [_session("s2", cwd=_folder("repo-b"))], split="repo-b.json")])
+    report = _report({})
+    good = _fragment_files([("repo-b.json", {"sessions": {"s2": _body(topics=[])}, "headline": "x"})])
+    bad = _raw_fragment("repo-a.json", b"{")
+    # the unreadable fragment is given last, so its line coming first is the rule and not the order of the arguments
+    # by hand: the unread line, then merged()'s line about the good fragment, then problems_in's line about its session,
+    # then the bad fragment's session, which no fragment holds, named by the file its reader was given
+    _check_unread("one unreadable fragment after a readable one", "repo-a.json", report,
+                  _main(report, digest, ["--fragments"] + good + [bad]),
+                  ["- fragment repo-b.json: unknown field headline",
+                   "- fragment repo-b.json: session s2 needs topics, a list of non-blank strings",
+                   "- session s1 from the digest has no entry in the report (in repo-a.json)"])
+
+
+def test_main_folds_a_fragment_with_a_byte_order_mark():
+    digest = _digest()
+    body = _body(topics=["from repo-a"], open_items=[_item("action", "do a")])
+    path = _raw_fragment("repo-a.json", b"\xef\xbb\xbf" + json.dumps({"sessions": {"s1": body}}).encode("utf-8"))
+    code, out, out_path = _main(_report({}), digest, ["--fragments", path])
+    whole = _report({"s1": body})
+    check("exits 0", code, 0)
+    check("stdout is that report's summary", out, render.summary(whole, digest, out_path) + "\n")
+    with open(out_path, encoding="utf-8") as f:
+        check("the page is the one built from the report holding the fragment's session", f.read(), render.page(whole, digest))
+    with open(_report_file(out_path), encoding="utf-8") as f:
+        check("the report file now holds the fragment's session", json.load(f), whole)
 
 
 # ----- the latest item on top ----------------------------------------------------
@@ -2222,6 +2338,8 @@ def test_card_heading_buttons():
 
 _TESTS = (test_valid_report_has_no_problems, test_missing_top_level_fields, test_range_not_the_digests,
           test_missing_labels, test_session_not_in_digest, test_digest_session_without_entry,
+          test_missing_session_in_one_repository_names_the_repository, test_missing_session_names_its_split_file,
+          test_missing_session_names_the_split_file_of_folders_sharing_a_name, test_missing_session_without_a_split_names_the_repository,
           test_session_without_topics, test_open_item_kind_and_text,
           test_tokens, test_compact, test_compact_top_unit, test_figures, test_figures_on_page,
           test_windows_detection, test_resume_command, test_terminal_command, test_deep_link,
@@ -2258,7 +2376,10 @@ _TESTS = (test_valid_report_has_no_problems, test_missing_top_level_fields, test
           test_located_leaves_other_sessions_alone, test_located_leaves_lines_about_no_session_alone,
           test_located_skips_a_malformed_fragment, test_located_names_the_last_fragment, test_located_keeps_order_and_count,
           test_located_on_the_schemas_own_lines, test_main_folds_fragments,
-          test_main_refuses_bad_fragments, test_main_names_a_malformed_sessions_once, test_main_leaves_the_report_without_fragments, test_newest_first, test_dated,
+          test_main_refuses_bad_fragments, test_main_names_a_malformed_sessions_once, test_main_leaves_the_report_without_fragments,
+          test_main_refuses_a_fragment_that_is_not_json, test_main_refuses_a_fragment_that_does_not_exist,
+          test_main_refuses_a_fragment_that_is_not_utf8, test_main_reads_the_other_fragments_past_an_unreadable_one,
+          test_main_folds_a_fragment_with_a_byte_order_mark, test_newest_first, test_dated,
           test_range_items_newest_first_with_their_day, test_range_page_has_no_day_headings, test_overview_groups_by_repository, test_sidebar_one_page,
           test_sidebar_pages, test_paging_and_maximise_labels, test_card_kinds_and_counts, test_card_heading_buttons)
 
