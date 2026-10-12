@@ -1,4 +1,4 @@
-<!-- translated from README.md, source sha256 5be21a5925dcb5b4c1b481d3274ef366461046a1793560d90840eb77fe4b5ac7; see CLAUDE.md "Translations of the root README" before editing -->
+<!-- translated from README.md, source sha256 731b206b045a0a116da3e74f6a9628cb450283e81f88c0c0080b2a891983cc3f; see CLAUDE.md "Translations of the root README" before editing -->
 <div align="center">
 
 <picture>
@@ -38,13 +38,9 @@ SoftwareOne Platform 的 Claude Code plugin marketplace。
 
 ### 🔁 從工單到 pull request
 
-![resolve-issue-dashboard 的縮圖：執行清單、pipeline 環形進度、agent 的工具呼叫和 token 統計](docs/issue-to-pr/thumbnails.png)
-
 四個 plugin，把一張工單帶到經過審查的 pull request。它們放在 [issue-to-pr](https://github.com/softwareone-platform/issue-to-pr/blob/main/README.zh-TW.md)，並且一起發布。`issue-to-pr-pipeline` 執行整個流程；在 Claude Code v2.1.143 或更新的版本上，安裝它就會一併安裝另外三個，而那三個也都能獨立使用。
 
-```
-/plugin install issue-to-pr-pipeline@tundra
-```
+<img alt="resolve-issue-dashboard 正在追蹤一次執行：依 repository 分組的執行清單、pipeline 的十一個步驟排成的環、token 統計，以及每個 agent 的工具呼叫" src="docs/issue-to-pr/dashboard.png">
 
 | Plugin | 做什麼 |
 |---|---|
@@ -53,18 +49,40 @@ SoftwareOne Platform 的 Claude Code plugin marketplace。
 | [`test-authoring`](https://github.com/softwareone-platform/issue-to-pr/blob/main/README.zh-TW.md#test-authoring) | 找出測試缺口，撰寫單元測試與整合測試，每個測試都由獨立的驗證者檢查 |
 | [`pr-lifecycle`](https://github.com/softwareone-platform/issue-to-pr/blob/main/README.zh-TW.md#pr-lifecycle) | 在 Azure DevOps 或 GitHub 上依你過去 PR 的風格開出 pull request，並處理它的審查意見 |
 
+一次安裝全部四個：
+
+```
+/plugin install issue-to-pr-pipeline@tundra
+```
+
 ### 🪞 你的工作方式
+
+#### [`whoami`](plugins/whoami/README.zh-TW.md)
+
+從你的程式碼、你的 prompt 和你的 CLAUDE.md 做一份自我評估，輸出成 HTML 報告。只有你能用 `/whoami:whoami` 啟動它。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/whoami/thumbnails-dark.png">
-  <img alt="whoami 報告的縮圖：時間軸、結論、流程圖和表格" src="docs/whoami/thumbnails-light.png">
+  <img alt="whoami 報告的縮圖：標題與摘要、你做得好和常漏掉的一個面向、一張流程圖，以及表格" src="docs/whoami/thumbnails-light.png" width="480">
 </picture>
 
-**[`whoami`](plugins/whoami/README.zh-TW.md)**：從你的程式碼、你的 prompt 和你的 CLAUDE.md 做一份自我評估，輸出成 HTML 報告。只有你能用 `/whoami:whoami` 啟動它。
+安裝指令：
+
+```
+/plugin install whoami@tundra
+```
+
+#### [`remind-me`](plugins/remind-me/README.zh-TW.md)
+
+你在某一天或一段日期裡跑過的 session 還留下哪些沒做完的事，逐一對照每個 pull request 和 branch 的即時狀態，並提供回到每個 session 的入口。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/remind-me/thumbnails-dark.png">
-  <img alt="remind-me 頁面的縮圖：單日概要、放大一張卡片的期間報告、一個 repository 在整段期間的頁面，以及一個 session" src="docs/remind-me/thumbnails-light.png" width="560">
+  <img alt="remind-me 頁面的縮圖：單日概要、放大一張卡片的期間報告、一個 repository 在整段期間的頁面，以及一個 session" src="docs/remind-me/thumbnails-light.png" width="480">
 </picture>
 
-**[`remind-me`](plugins/remind-me/README.zh-TW.md)**：你在某一天或一段日期裡跑過的 session 還留下哪些沒做完的事，逐一對照每個 pull request 和 branch 的即時狀態，並提供回到每個 session 的入口。
+安裝指令：
+
+```
+/plugin install remind-me@tundra
+```

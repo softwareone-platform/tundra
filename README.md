@@ -37,13 +37,9 @@ Use the full HTTPS URL above. The `softwareone-platform/tundra` shorthand is als
 
 ### 🔁 From ticket to pull request
 
-![Thumbnails of the resolve-issue-dashboard: its runs, the pipeline ring, an agent's tool calls and the token figures](docs/issue-to-pr/thumbnails.png)
-
 Four plugins that take a ticket to a reviewed pull request. They live in [issue-to-pr](https://github.com/softwareone-platform/issue-to-pr) and are released together. `issue-to-pr-pipeline` runs the whole flow, and on Claude Code v2.1.143 or later installing it installs the other three, each of which also works on its own.
 
-```
-/plugin install issue-to-pr-pipeline@tundra
-```
+<img alt="The resolve-issue-dashboard following a run: the runs by repository, the pipeline's eleven steps as a ring, the token figures and each agent's tool calls" src="docs/issue-to-pr/dashboard.png">
 
 | Plugin | What it does |
 |---|---|
@@ -52,18 +48,40 @@ Four plugins that take a ticket to a reviewed pull request. They live in [issue-
 | [`test-authoring`](https://github.com/softwareone-platform/issue-to-pr#test-authoring) | Finds test gaps and writes unit and integration tests, each checked by an independent verifier |
 | [`pr-lifecycle`](https://github.com/softwareone-platform/issue-to-pr#pr-lifecycle) | Opens a pull request in the style of your past ones and resolves its review comments, on Azure DevOps or GitHub |
 
+Install all four at once:
+
+```
+/plugin install issue-to-pr-pipeline@tundra
+```
+
 ### 🪞 How you work
+
+#### [`whoami`](plugins/whoami/README.md)
+
+A self-assessment from your code, your prompts, and your CLAUDE.md, as an HTML report. Only you can start it, with `/whoami:whoami`.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/whoami/thumbnails-dark.png">
-  <img alt="Thumbnails of a whoami report: its timeline, its conclusion, a flow diagram and its tables" src="docs/whoami/thumbnails-light.png">
+  <img alt="Thumbnails of a whoami report: its header and summary, an axis with what you get right and what you miss, a diagram, and its tables" src="docs/whoami/thumbnails-light.png" width="480">
 </picture>
 
-**[`whoami`](plugins/whoami/README.md)** — A self-assessment from your code, your prompts, and your CLAUDE.md, as an HTML report. Only you can start it, with `/whoami:whoami`.
+Install it with:
+
+```
+/plugin install whoami@tundra
+```
+
+#### [`remind-me`](plugins/remind-me/README.md)
+
+What you left open in the sessions you ran on a given day or over a range of days, checked against the live state of each pull request and branch, with a way back into each session.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/remind-me/thumbnails-dark.png">
-  <img alt="Thumbnails of remind-me pages: a day's overview, a range with one card maximised, a repository over the range, and a session" src="docs/remind-me/thumbnails-light.png" width="560">
+  <img alt="Thumbnails of remind-me pages: a day's overview, a range with one card maximised, a repository over the range, and a session" src="docs/remind-me/thumbnails-light.png" width="480">
 </picture>
 
-**[`remind-me`](plugins/remind-me/README.md)** — What you left open in the sessions you ran on a given day or over a range of days, checked against the live state of each pull request and branch, with a way back into each session.
+Install it with:
+
+```
+/plugin install remind-me@tundra
+```
