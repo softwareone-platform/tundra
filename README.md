@@ -63,7 +63,7 @@ Four plugins that take a ticket to a reviewed pull request. They live in [issue-
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/remind-me/thumbnails-dark.png">
-  <img alt="Thumbnails of a remind-me page: the day's overview, its timeline, a repository and a session" src="docs/remind-me/thumbnails-light.png">
+  <img alt="Thumbnails of remind-me pages: a day's overview, a range with one card maximised, a repository over the range, and a session" src="docs/remind-me/thumbnails-light.png" width="560">
 </picture>
 
 **[`remind-me`](plugins/remind-me/README.md)** — What you left open in the sessions you ran on a given day or over a range of days, checked against the live state of each pull request and branch, with a way back into each session.

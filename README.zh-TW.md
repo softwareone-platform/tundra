@@ -1,4 +1,4 @@
-<!-- translated from README.md, source sha256 7cbf6e3fee0a56adc1ca29c797f1428e95bf554140fb0cbbf0f3251082af3960; see CLAUDE.md "Translations of the root README" before editing -->
+<!-- translated from README.md, source sha256 5be21a5925dcb5b4c1b481d3274ef366461046a1793560d90840eb77fe4b5ac7; see CLAUDE.md "Translations of the root README" before editing -->
 <div align="center">
 
 <picture>
@@ -64,7 +64,7 @@ SoftwareOne Platform 的 Claude Code plugin marketplace。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/remind-me/thumbnails-dark.png">
-  <img alt="remind-me 頁面的縮圖：當天概要、時間軸、一個 repository 和一個 session" src="docs/remind-me/thumbnails-light.png">
+  <img alt="remind-me 頁面的縮圖：單日概要、放大一張卡片的期間報告、一個 repository 在整段期間的頁面，以及一個 session" src="docs/remind-me/thumbnails-light.png" width="560">
 </picture>
 
 **[`remind-me`](plugins/remind-me/README.zh-TW.md)**：你在某一天或一段日期裡跑過的 session 還留下哪些沒做完的事，逐一對照每個 pull request 和 branch 的即時狀態，並提供回到每個 session 的入口。
