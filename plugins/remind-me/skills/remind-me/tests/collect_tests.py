@@ -1767,6 +1767,146 @@ def test_non_ascii_on_cp1252_console():
           [p["text"] for g in doc["repositories"] for s in g["sessions"] for p in s["prompts"]], [text])
 
 
+# ----- openable: a transcript past MAX_PATH ----------------------------------------
+
+def _openable_as(name, full, path):
+    """openable(path) with os.name as name and every absolute form as full, so any OS can play Windows."""
+    saved = os.name, os.path.abspath
+    os.name = name
+    os.path.abspath = lambda p: full
+    try:
+        return cl.openable(path)
+    finally:
+        os.name, os.path.abspath = saved
+
+
+def test_openable():
+    # by hand: "C:\" is 3 characters, so these absolute forms are exactly 260 and 259 long
+    at_limit = "C:\\" + "x" * 257
+    under = "C:\\" + "x" * 256
+    check("on Windows an absolute form of 260 characters is the extended-length form of it",
+          _openable_as("nt", at_limit, "s1.jsonl"), "\\\\?\\" + at_limit)
+    check("on Windows an absolute form of 259 characters leaves the path unchanged",
+          _openable_as("nt", under, "s1.jsonl"), "s1.jsonl")
+    extended = "\\\\?\\" + at_limit
+    check("on Windows a path already in the extended-length form is unchanged",
+          _openable_as("nt", extended, extended), extended)
+    check("off Windows a path of any length is unchanged", _openable_as("posix", "/" + "x" * 400, "s1.jsonl"),
+          "s1.jsonl")
+    if os.name == "nt":
+        deep = os.path.join(_tempdir(), "p" * 255)
+        check("on this Windows a real path past 260 characters gets the prefix", cl.openable(deep), "\\\\?\\" + deep)
+        short = os.path.join(_tempdir(), "s1.jsonl")
+        check("on this Windows a real short path is unchanged", cl.openable(short), short)
+
+
+def _or_raised(body):
+    try:
+        return body()
+    except OSError as exc:
+        return "raised " + type(exc).__name__
+
+
+def test_openable_used_by_readers():
+    # every reader is handed a path that does not exist and only openable turns it into the real one,
+    # so a reader that opens the path it was given raises instead
+    root = _projects({"proj/s1.jsonl": [_user("fix the build"), _assistant("Done.", msg_id="m1", usage=_usage(10, 5))],
+                      "proj/s1/subagents/a1.jsonl": [_assistant("sub", msg_id="sa1", usage=_usage(3),
+                                                                model="claude-y")]})
+    ghost = os.path.join(root, "ghost", "s1.jsonl")
+    to_real = {ghost: os.path.join(root, "proj", "s1.jsonl"),
+               os.path.join(root, "ghost", "s1", "subagents"): os.path.join(root, "proj", "s1", "subagents")}
+    saved = cl.openable
+    cl.openable = lambda path: to_real.get(path, path)
+    try:
+        days = _or_raised(lambda: cl.days_in(ghost))
+        work = _or_raised(lambda: cl.work_days(ghost))
+        session = _or_raised(lambda: cl.read_session(ghost, {DAY}))
+        totals = {}
+        sub = _or_raised(lambda: cl.subagent_usage(ghost, {DAY}, totals))
+    finally:
+        cl.openable = saved
+    check("days_in opens what openable returns", days, {DAY})
+    check("work_days opens what openable returns", work, {DAY})
+    check("read_session opens what openable returns",
+          session if isinstance(session, str) else session["prompts"],
+          [{"at": DAY + " 10:00", "kind": "prompt", "text": "fix the build"}])
+    # by hand: the session's own reply is 10 in and 5 out, the subagent's 3 in
+    check("read_session counts the subagents in the folder openable returns",
+          session if isinstance(session, str) else session["usage"],
+          {"claude-x": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0}, "claude-y": _sub_usage(3)["claude-y"]})
+    check("subagent_usage lists the folder openable returns", (sub, totals), (None, _sub_usage(3)))
+
+
+def test_subagent_usage_listed():
+    root = _projects({"proj/s1.jsonl": [_user("x")]})
+    totals = {"claude-x": dict.fromkeys(cl.USAGE_FIELDS, 1)}
+    outcome = _or_raised(lambda: cl.subagent_usage(os.path.join(root, "proj", "s1.jsonl"), {DAY}, totals))
+    check("no subagents folder adds no usage and raises nothing",
+          (outcome, totals), (None, {"claude-x": dict.fromkeys(cl.USAGE_FIELDS, 1)}))
+    # brackets are a glob character class, so a folder globbed rather than listed would match no file here
+    root = _projects({"proj[1]/s1.jsonl": [_user("x")],
+                      "proj[1]/s1/subagents/a1.jsonl": [_assistant("sub", msg_id="sa1", usage=_usage(3),
+                                                                   model="claude-y")]})
+    totals = {}
+    cl.subagent_usage(os.path.join(root, "proj[1]", "s1.jsonl"), {DAY}, totals)
+    check("a subagents folder whose path holds glob characters is still counted", totals, _sub_usage(3))
+
+
+# a session id is a 36-character uuid, which is what pushed the 2026-10-12 transcript past the limit
+_LONG_ID = "a1b2c3d4-0000-4000-8000-000000000001"
+
+
+def _long_projects(files):
+    """Like _projects, but the project folder's path is 240 characters, so the folder still lists
+    while every transcript in it runs past 260, as a session started in a deep folder leaves it.
+    Files are written through the extended-length form, the only one Windows accepts that deep."""
+    root = _tempdir()
+    project = os.path.join(root, "p" * max(1, 240 - len(root) - 1))
+    for rel, records in files.items():
+        path = "\\\\?\\" + os.path.join(project, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            for r in records:
+                f.write(json.dumps(r, separators=(",", ":"), ensure_ascii=False) + "\n")
+    return root, project
+
+
+def test_long_path_transcript():
+    # only Windows has a MAX_PATH to run past, and test_openable plays it for every other OS
+    if os.name != "nt":
+        return
+    root, project = _long_projects({
+        _LONG_ID + ".jsonl": [_user("fix the build", at="10:00"),
+                              _assistant("Done.", at="10:01", msg_id="m1", usage=_usage(10, 5))],
+        _LONG_ID + "/subagents/a1.jsonl": [_assistant("sub", msg_id="sa1", usage=_usage(3), model="claude-y")],
+    })
+    path = os.path.join(project, _LONG_ID + ".jsonl")
+    check("fixture: the transcript's path is past 260 characters and its folder's is not",
+          (len(path) >= 260, len(project) < 260), (True, True))
+    check("fixture: the transcript is found", cl.transcripts(root), [path])
+    check("its days are read", _or_raised(lambda: cl.days_in(path)), {DAY})
+    check("its work days are read", _or_raised(lambda: cl.work_days(path)), {DAY})
+    check("it can be the default day", _or_raised(lambda: cl.default_day([path], TODAY)), DAY)
+    session = _or_raised(lambda: cl.read_session(path, {DAY}))
+    check("its prompts are read", session if isinstance(session, str) else session["prompts"],
+          [{"at": DAY + " 10:00", "kind": "prompt", "text": "fix the build"}])
+    # by hand: the session's own reply is 10 in and 5 out, the subagent's 3 in
+    check("its subagents under the long path are counted", session if isinstance(session, str) else session["usage"],
+          {"claude-x": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0}, "claude-y": _sub_usage(3)["claude-y"]})
+    saved = os.getcwd()
+    os.chdir(_tempdir())
+    try:
+        digest = _or_raised(lambda: cl.collect(first=DAY, last=DAY, root=root, live=False))
+    finally:
+        os.chdir(saved)
+    check("the collector runs through it and keeps the session",
+          digest if isinstance(digest, str) else [s["id"] for g in digest["repositories"] for s in g["sessions"]],
+          [_LONG_ID])
+
+
 # ----- the guard held -------------------------------------------------------------
 
 def test_no_cli_escaped():
@@ -1808,6 +1948,7 @@ _TESTS = (test_isolation, test_local_time, test_days_in, test_default_day, test_
           test_read_session_run_subagents_two_runs, test_read_session_run_subagents_not_closed,
           test_read_session_run_subagents_start_unparseable, test_read_session_run_subagents_end_unparseable,
           test_split, test_main_split_needs_out, test_main_split, test_main_split_no_sessions,
+          test_openable, test_openable_used_by_readers, test_subagent_usage_listed, test_long_path_transcript,
           test_no_cli_escaped)
 
 

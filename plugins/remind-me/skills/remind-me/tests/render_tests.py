@@ -1688,6 +1688,20 @@ def test_summary_on_a_range():
     check("a repository with nothing open is left out", [line for line in quiet.splitlines() if line.startswith("### ")], [])
 
 
+def test_summary_on_a_range_ends_with_the_link():
+    out = os.path.join(tempfile.mkdtemp(), "report.html")
+    report = _report({"a1": _body(open_items=[_item("action", "a1 first")]), "a2": _body(), "b1": _body()}, **{"from": _FROM, "to": _TO})
+    got = _in_view(None, lambda: render.summary(report, _range_digest(), out))
+    # by hand: the range's one open item, then the same closing a one-day summary has
+    check("ends with the last item, the page URI, then the language hint", got.splitlines()[-5:],
+          ["- [action]: a1 first (10-02)", "", pathlib.Path(out).resolve().as_uri(), "", "_[language_hint]_"])
+    check("the URI is a file URI", got.splitlines()[-3].startswith("file:///"), True)
+    # a range with nothing open still closes the same way
+    quiet = _in_view(None, lambda: render.summary(_range_report(), _range_digest(), out))
+    check("with nothing open it still ends with the page URI then the language hint", quiet.splitlines()[-3:],
+          [pathlib.Path(out).resolve().as_uri(), "", "_[language_hint]_"])
+
+
 def test_view_does_not_leak():
     render.page(_range_report(), _range_digest())
     markup = _markup(render.page(_report(), _digest()))
@@ -1916,6 +1930,16 @@ def test_range_items_newest_first_with_their_day():
     check("a one-day page carries no data-day", "data-day" in one_day, False)
 
 
+def test_range_page_has_no_day_headings():
+    report = _report({"a1": _body(open_items=[_item("action", "a1 x")]),
+                      "a2": _body(open_items=[_item("action", "a2 x")], done=["a2 done"]),
+                      "b1": _body(open_items=[_item("question", "b1 x")])}, **{"from": _FROM, "to": _TO})
+    page = render.page(report, _range_digest())
+    # the script makes the headings when a card is maximised, so the name is on the page, just not in its markup
+    check("the script names the day heading", "dayhead" in re.search(r"<script>(.*?)</script>", page, re.S).group(1), True)
+    check("the markup carries no day heading", "dayhead" in _markup(page), False)
+
+
 # ----- the overview grouped by repository ----------------------------------------
 
 def _blocks(card):
@@ -2114,11 +2138,11 @@ _TESTS = (test_valid_report_has_no_problems, test_missing_top_level_fields, test
           test_length_across_days, test_day_axis, test_day_axis_reads_days, test_position, test_rows_for_on_a_range,
           test_range_timeline_markup, test_one_day_timeline_markup, test_range_text_and_attributes, test_range_headings,
           test_one_day_heading, test_level_range_required, test_schema_lists_every_label,
-          test_summary_on_a_range, test_view_does_not_leak,
+          test_summary_on_a_range, test_summary_on_a_range_ends_with_the_link, test_view_does_not_leak,
           test_merged_without_fragments, test_merged_folds_each_fragment, test_merged_refuses_a_malformed_fragment,
           test_merged_names_unknown_fragment_fields, test_merged_refuses_a_session_twice, test_main_folds_fragments,
           test_main_refuses_bad_fragments, test_main_leaves_the_report_without_fragments, test_newest_first, test_dated,
-          test_range_items_newest_first_with_their_day, test_overview_groups_by_repository, test_sidebar_one_page,
+          test_range_items_newest_first_with_their_day, test_range_page_has_no_day_headings, test_overview_groups_by_repository, test_sidebar_one_page,
           test_sidebar_pages, test_paging_and_maximise_labels, test_card_kinds_and_counts, test_card_heading_buttons)
 
 

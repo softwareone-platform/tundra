@@ -91,10 +91,24 @@ def transcripts(root):
     return sorted(glob.glob(os.path.join(root, "*", "*.jsonl")))
 
 
+def openable(path):
+    """The path as Windows can open it: past MAX_PATH only the extended-length form works.
+
+    A project folder is named after the session's folder, so a session started deep enough
+    puts its transcript past 260 characters, and one such file stopped the whole collector.
+    """
+    if os.name != "nt":
+        return path
+    full = os.path.abspath(path)
+    if len(full) < 260 or full.startswith("\\\\?\\"):
+        return path
+    return "\\\\?\\" + full
+
+
 def days_in(path):
     """The local days a transcript has entries on, read without parsing every line."""
     found = set()
-    with open(path, encoding="utf-8", errors="replace") as handle:
+    with open(openable(path), encoding="utf-8", errors="replace") as handle:
         for line in handle:
             start = line.find('"timestamp":"')
             if start < 0:
@@ -108,7 +122,7 @@ def days_in(path):
 def work_days(path):
     """The local days a transcript holds a typed prompt in an interactive session: the days a report keeps."""
     found = set()
-    with open(path, encoding="utf-8", errors="replace") as handle:
+    with open(openable(path), encoding="utf-8", errors="replace") as handle:
         for line in handle:
             if '"type":"user"' not in line:
                 continue
@@ -220,10 +234,15 @@ def in_runs(when, runs):
 
 def subagent_usage(path, days, totals, runs=()):
     """Subagents spend on the session's behalf, so their usage counts toward it, except while this skill was running."""
-    folder = os.path.join(path[:-len(".jsonl")], "subagents")
-    for sub_path in glob.glob(os.path.join(folder, "*.jsonl")):
+    folder = openable(os.path.join(path[:-len(".jsonl")], "subagents"))
+    # listed rather than globbed, so a bracket in the configuration folder's path is never read as a pattern
+    try:
+        names = sorted(name for name in os.listdir(folder) if name.endswith(".jsonl"))
+    except OSError:
+        names = []
+    for name in names:
         seen = set()
-        with open(sub_path, encoding="utf-8", errors="replace") as handle:
+        with open(os.path.join(folder, name), encoding="utf-8", errors="replace") as handle:
             for line in handle:
                 if '"usage"' not in line:
                     continue
@@ -271,7 +290,7 @@ def read_session(path, days):
     in_run = False
     # each run of this skill as [start, end), end None while it is still going, so its subagents can be left out too
     runs = []
-    with open(path, encoding="utf-8", errors="replace") as handle:
+    with open(openable(path), encoding="utf-8", errors="replace") as handle:
         for line in handle:
             try:
                 entry = json.loads(line)
