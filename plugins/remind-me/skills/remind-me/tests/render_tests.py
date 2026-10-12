@@ -1695,7 +1695,6 @@ def test_summary_on_a_range_ends_with_the_link():
     # by hand: the range's one open item, then the same closing a one-day summary has
     check("ends with the last item, the page URI, then the language hint", got.splitlines()[-5:],
           ["- [action]: a1 first (10-02)", "", pathlib.Path(out).resolve().as_uri(), "", "_[language_hint]_"])
-    check("the URI is a file URI", got.splitlines()[-3].startswith("file:///"), True)
     # a range with nothing open still closes the same way
     quiet = _in_view(None, lambda: render.summary(_range_report(), _range_digest(), out))
     check("with nothing open it still ends with the page URI then the language hint", quiet.splitlines()[-3:],
@@ -1748,8 +1747,10 @@ def test_merged_folds_each_fragment():
     check("every other field is the report's",
           {key: value for key, value in got.items() if key != "sessions"}, {key: value for key, value in before.items() if key != "sessions"})
     check("the report passed in is not changed", report, before)
-    # the owner's ruling: with fragments given, a report without a sessions object takes the fragments' sessions alone
-    for name, value in (("absent", None), ("a list", ["s1"]), ("a string", "s1")):
+    # the owner's ruling: with fragments given, a report without a sessions field takes the fragments' sessions alone,
+    # but a malformed sessions field must not vanish under the fragments'
+    for name, value, want in (("absent", None, []), ("a list", ["s1"], ["sessions must be an object"]),
+                              ("a string", "s1", ["sessions must be an object"])):
         report = _report()
         if value is None:
             del report["sessions"]
@@ -1757,7 +1758,7 @@ def test_merged_folds_each_fragment():
             report["sessions"] = value
         got, problems = render.merged(report, [("repo-a.json", {"sessions": {"s1": _body()}})])
         check("a report whose sessions is %s takes the fragments' sessions" % name, got["sessions"], {"s1": _body()})
-        check("a report whose sessions is %s gives no fragment problem" % name, problems, [])
+        check("a report whose sessions is %s gives the problems it should" % name, problems, want)
 
 
 def test_merged_refuses_a_malformed_fragment():
@@ -1787,9 +1788,109 @@ def test_merged_refuses_a_session_twice():
     fragments = [("repo-a.json", {"sessions": {"s2": _body(topics=["from a"])}}),
                  ("repo-b.json", {"sessions": {"s2": _body(topics=["from b"])}})]
     _, problems = render.merged(_report({}), fragments)
-    check("one id in two fragments is named", problems, ["session s2 is in more than one fragment"])
+    check("one id in two fragments is named with both fragments", problems,
+          ["session s2 is in fragment repo-a.json and in fragment repo-b.json"])
     _, problems = render.merged(_report({"s1": _body()}), [("repo-a.json", {"sessions": {"s1": _body()}})])
-    check("a fragment id already in the report is named", problems, ["session s1 is in more than one fragment"])
+    check("a fragment id already in the report is named with the report and the fragment", problems,
+          ["session s1 is in the report and in fragment repo-a.json"])
+
+
+# the owner's ruling of 2026-10-12: the orchestrator never reads the digest,
+# so every problem about a fragment's session names that fragment, so the right reader can be sent again
+def test_located_names_a_fragments_session():
+    fragments = [("repo-a.json", {"sessions": {"s2": _body()}})]
+    for problem in ("session s2 needs topics, a list of non-blank strings",
+                    "session s2 is not in the digest",
+                    "session s2 must be an object",
+                    "session s2: unknown field x",
+                    "session s2: open must be a list of objects",
+                    "session s2: an open item has no text",
+                    "session s2: open item kind must be one of decision, action, question",
+                    "session s2: decided must be a list of non-blank strings"):
+        check("'%s' is prefixed with its fragment" % problem, render.located([problem], fragments),
+              ["fragment repo-a.json: " + problem])
+
+
+def test_located_reads_the_id_up_to_whitespace_or_colon():
+    fragments = [("repo-a.json", {"sessions": {"s2": _body(), "s2:x": _body()}})]
+    # by hand: the id is everything before the first space or colon, so "s22" is not "s2", and "s2:x" never matches as a whole
+    for problem, want in (("session s22: unknown field x", "session s22: unknown field x"),
+                          ("session s22 needs topics, a list of non-blank strings",
+                           "session s22 needs topics, a list of non-blank strings"),
+                          ("session s2:x: unknown field y", "fragment repo-a.json: session s2:x: unknown field y")):
+        check("'%s' is read with the id ending at whitespace or a colon" % problem, render.located([problem], fragments), [want])
+    # a fragment holding only "s2:x" claims no line, since no line's id can carry a colon
+    check("an id with a colon in it is never matched",
+          render.located(["session s2:x: unknown field y"], [("repo-a.json", {"sessions": {"s2:x": _body()}})]),
+          ["session s2:x: unknown field y"])
+
+
+def test_located_leaves_other_sessions_alone():
+    fragments = [("repo-a.json", {"sessions": {"s2": _body()}})]
+    for problem in ("session s1: unknown field x",
+                    "session s1 needs topics, a list of non-blank strings",
+                    "session s9 from the digest has no entry in the report"):
+        check("'%s' about a session in no fragment is unchanged" % problem, render.located([problem], fragments), [problem])
+
+
+def test_located_leaves_lines_about_no_session_alone():
+    # a fragment that owns "s" makes sure "sessions must be an object" is not read as session id "s"
+    fragments = [("repo-a.json", {"sessions": {"s": _body(), "s2": _body()}})]
+    for problem in ("sessions must be an object", "labels missing: headline, summary", "fragment x: unknown field y",
+                    "missing top-level field: sessions", "unknown top-level field: session", "the report must be a JSON object",
+                    # a JSON key may hold a space, so a misspelt field can read "session s2" after the line has begun
+                    "unknown top-level field: session s2", "fragment x: unknown field session s2"):
+        check("'%s' is unchanged" % problem, render.located([problem], fragments), [problem])
+
+
+def test_located_skips_a_malformed_fragment():
+    problem = "session s2: unknown field x"
+    for name, fragment in (("a list", ["s2"]), ("a string", "s2"), ("null", None), ("an object without sessions", {}),
+                           ("an object whose sessions is a list", {"sessions": ["s2"]}),
+                           ("an object whose sessions is a string", {"sessions": "s2"})):
+        check("a fragment that is %s claims no session" % name, render.located([problem], [("bad.json", fragment)]), [problem])
+    # a malformed fragment before a good one does not stop the good one claiming its sessions
+    check("a good fragment after a malformed one still claims its sessions",
+          render.located([problem], [("bad.json", []), ("good.json", {"sessions": {"s2": _body()}})]),
+          ["fragment good.json: " + problem])
+
+
+def test_located_names_the_last_fragment():
+    fragments = [("repo-a.json", {"sessions": {"s2": _body(topics=["from a"])}}),
+                 ("repo-b.json", {"sessions": {"s2": _body(topics=["from b"])}})]
+    # the last fragment, as merged() keeps the last fragment's body
+    check("one id in two fragments is named by the last of them", render.located(["session s2: unknown field x"], fragments),
+          ["fragment repo-b.json: session s2: unknown field x"])
+    got, _ = render.merged(_report({}), fragments)
+    check("which is the fragment whose body merged() kept", got["sessions"]["s2"]["topics"], ["from b"])
+
+
+def test_located_keeps_order_and_count():
+    fragments = [("repo-a.json", {"sessions": {"s2": _body()}}), ("repo-b.json", {"sessions": {"s3": _body()}})]
+    problems = ["labels missing: headline", "session s3: unknown field x", "session s1: unknown field x",
+                "session s2 needs topics, a list of non-blank strings", "session s3: unknown field x"]
+    # by hand: each line in its place, the repeated s3 line kept twice
+    check("every line keeps its place and none is added or dropped", render.located(problems, fragments),
+          ["labels missing: headline", "fragment repo-b.json: session s3: unknown field x", "session s1: unknown field x",
+           "fragment repo-a.json: session s2 needs topics, a list of non-blank strings",
+           "fragment repo-b.json: session s3: unknown field x"])
+    check("with no fragments the problems come back unchanged", render.located(problems, []), problems)
+    check("with no problems nothing comes back", render.located([], fragments), [])
+
+
+def test_located_on_the_schemas_own_lines():
+    digest = _digest([_group_of("repo-a", [_session("s1")]), _group_of("repo-b", [_session("s2", cwd=_folder("repo-b"))])])
+    bad = {"topics": [], "open": [{"kind": "action"}], "extra": 1}
+    fragments = [("repo-b.json", {"sessions": {"s2": bad}})]
+    report, _ = render.merged(_report({"s1": _body(topics=[""])}), fragments)
+    # by hand: the report's own s1 first, as merged() keeps it ahead of the fragments,
+    # then s2's unknown field, missing topics and open item without text
+    check("each line problems_in gives about the fragment's session names it, and the report's own session stays bare",
+          render.located(render.problems_in(report, digest), fragments),
+          ["session s1 needs topics, a list of non-blank strings",
+           "fragment repo-b.json: session s2: unknown field extra",
+           "fragment repo-b.json: session s2 needs topics, a list of non-blank strings",
+           "fragment repo-b.json: session s2: an open item has no text"])
 
 
 def _fragment_files(fragments):
@@ -1836,14 +1937,26 @@ def test_main_refuses_bad_fragments():
     paths = _fragment_files([("bad.json", []), ("repo-a.json", {"sessions": {"zz": _body()}, "headline": "x"})])
     code, out, out_path = _main(report, _digest(), ["--fragments"] + paths)
     check("exits 2", code, render.EXIT_SCHEMA)
-    check("the fragments' problems come first, each named by its file's basename, then the report's", out.splitlines(),
+    check("the fragments' problems come first, each named by its file's basename, then the report's, "
+          "with a fragment's session named by its fragment", out.splitlines(),
           [SCHEMA_HEADER, "- fragment bad.json must be an object with a sessions object",
            "- fragment repo-a.json: unknown field headline",
-           "- session zz is not in the digest",
+           "- fragment repo-a.json: session zz is not in the digest",
            "- session s1 from the digest has no entry in the report"])
     check("no page written", os.path.exists(out_path), False)
     with open(_report_file(out_path), encoding="utf-8") as f:
         check("the report file is left as it was", f.read(), json.dumps(report))
+
+
+def test_main_names_a_malformed_sessions_once():
+    report = _report(["s1"])
+    paths = _fragment_files([("repo-a.json", {"sessions": {"s1": _body()}})])
+    code, out, out_path = _main(report, _digest(), ["--fragments"] + paths)
+    check("exits 2", code, render.EXIT_SCHEMA)
+    # merged() names it, and the merged report holds the fragments' sessions object, so problems_in does not name it again
+    check("a report whose sessions is a list is named once and nothing else is", out.splitlines(),
+          [SCHEMA_HEADER, "- sessions must be an object"])
+    check("no page written", os.path.exists(out_path), False)
 
 
 def test_main_leaves_the_report_without_fragments():
@@ -1936,7 +2049,7 @@ def test_range_page_has_no_day_headings():
                       "b1": _body(open_items=[_item("question", "b1 x")])}, **{"from": _FROM, "to": _TO})
     page = render.page(report, _range_digest())
     # the script makes the headings when a card is maximised, so the name is on the page, just not in its markup
-    check("the script names the day heading", "dayhead" in re.search(r"<script>(.*?)</script>", page, re.S).group(1), True)
+    check("the script names the day heading", "dayhead" in "".join(re.findall(r"<script>(.*?)</script>", page, re.S)), True)
     check("the markup carries no day heading", "dayhead" in _markup(page), False)
 
 
@@ -2140,8 +2253,12 @@ _TESTS = (test_valid_report_has_no_problems, test_missing_top_level_fields, test
           test_one_day_heading, test_level_range_required, test_schema_lists_every_label,
           test_summary_on_a_range, test_summary_on_a_range_ends_with_the_link, test_view_does_not_leak,
           test_merged_without_fragments, test_merged_folds_each_fragment, test_merged_refuses_a_malformed_fragment,
-          test_merged_names_unknown_fragment_fields, test_merged_refuses_a_session_twice, test_main_folds_fragments,
-          test_main_refuses_bad_fragments, test_main_leaves_the_report_without_fragments, test_newest_first, test_dated,
+          test_merged_names_unknown_fragment_fields, test_merged_refuses_a_session_twice,
+          test_located_names_a_fragments_session, test_located_reads_the_id_up_to_whitespace_or_colon,
+          test_located_leaves_other_sessions_alone, test_located_leaves_lines_about_no_session_alone,
+          test_located_skips_a_malformed_fragment, test_located_names_the_last_fragment, test_located_keeps_order_and_count,
+          test_located_on_the_schemas_own_lines, test_main_folds_fragments,
+          test_main_refuses_bad_fragments, test_main_names_a_malformed_sessions_once, test_main_leaves_the_report_without_fragments, test_newest_first, test_dated,
           test_range_items_newest_first_with_their_day, test_range_page_has_no_day_headings, test_overview_groups_by_repository, test_sidebar_one_page,
           test_sidebar_pages, test_paging_and_maximise_labels, test_card_kinds_and_counts, test_card_heading_buttons)
 

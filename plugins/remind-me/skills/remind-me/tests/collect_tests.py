@@ -1854,7 +1854,8 @@ def test_subagent_usage_listed():
     check("a subagents folder whose path holds glob characters is still counted", totals, _sub_usage(3))
 
 
-# a session id is a 36-character uuid, which is what pushed the 2026-10-12 transcript past the limit
+# a session id adds its 36 characters and ".jsonl" to the project folder's path,
+# which took a transcript in a deep folder past the limit on 2026-10-12
 _LONG_ID = "a1b2c3d4-0000-4000-8000-000000000001"
 
 
@@ -1876,7 +1877,14 @@ def _long_projects(files):
 def test_long_path_transcript():
     # only Windows has a MAX_PATH to run past, and test_openable plays it for every other OS
     if os.name != "nt":
+        # a group with no check prints nothing, so this says it was skipped rather than passed
+        check("NOT RUN here: only Windows has a MAX_PATH to run past, so this group runs on Windows alone",
+              os.name == "nt", False)
         return
+    # the checks below prove the fix only where Windows has LongPathsEnabled at 0:
+    # where it is 1, python.exe opens a 283-character path with no prefix,
+    # so they pass even with openable removed.
+    # test_openable_used_by_readers proves the wiring on every machine.
     root, project = _long_projects({
         _LONG_ID + ".jsonl": [_user("fix the build", at="10:00"),
                               _assistant("Done.", at="10:01", msg_id="m1", usage=_usage(10, 5))],

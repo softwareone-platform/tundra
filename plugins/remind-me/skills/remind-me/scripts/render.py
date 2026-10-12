@@ -120,13 +120,17 @@ def problems_in(report, digest):
 def merged(report, fragments):
     """The report with each reader's sessions folded in, and the problems the fragments carry themselves.
 
-    A long range is judged by one reader per repository, each writing only its sessions,
+    Several repositories are judged by one reader each, each writing only its sessions,
     so the sessions arrive as fragments beside a report that holds everything else.
     """
     found = []
     if not fragments or not isinstance(report, dict):
         return report, found
+    # a malformed sessions field would otherwise vanish under the fragments' sessions
+    if "sessions" in report and not isinstance(report["sessions"], dict):
+        found.append("sessions must be an object")
     sessions = dict(report["sessions"]) if isinstance(report.get("sessions"), dict) else {}
+    origin = {session_id: "the report" for session_id in sessions}
     for name, fragment in fragments:
         if not isinstance(fragment, dict) or not isinstance(fragment.get("sessions"), dict):
             found.append("fragment %s must be an object with a sessions object" % name)
@@ -135,9 +139,31 @@ def merged(report, fragments):
         for session_id, body in fragment["sessions"].items():
             # two readers judging one session would leave whichever ran last, so a repeat is refused rather than settled by order
             if session_id in sessions:
-                found.append("session %s is in more than one fragment" % session_id)
+                found.append("session %s is in %s and in fragment %s" % (session_id, origin[session_id], name))
+            else:
+                origin[session_id] = "fragment " + name
             sessions[session_id] = body
     return dict(report, sessions=sessions), found
+
+
+def located(problems, fragments):
+    """Each problem with a session that came from a fragment, prefixed with that fragment's name.
+
+    The orchestrator never reads the digest, so a session id alone does not tell it which reader to send again.
+    """
+    owner = {}
+    for name, fragment in fragments:
+        if isinstance(fragment, dict) and isinstance(fragment.get("sessions"), dict):
+            # the last fragment wins, as it does in merged(), so a problem names the reader whose body was checked
+            for session_id in fragment["sessions"]:
+                owner[session_id] = name
+    named = []
+    for problem in problems:
+        # most lines go on "session <id>: ...", and the colon is not part of the id
+        match = re.match(r"session ([^\s:]+)", problem)
+        name = owner.get(match.group(1)) if match else None
+        named.append("fragment %s: %s" % (name, problem) if name else problem)
+    return named
 
 
 def lines_ok(value):
@@ -988,6 +1014,9 @@ svg.link path { fill:none; stroke:var(--lv); stroke-width:2 } svg.link circle { 
 .max-on .items, .max-on .groups { display:block; column-width:380px; column-gap:34px }
 .max-on .items li { break-inside:avoid; margin-bottom:12px }
 .max-on .groups .items { column-width:auto; columns:auto } .max-on .group { break-inside:avoid; display:block; margin-bottom:18px }
+/* in columns the line goes under a group, since one above would also head the next column */
+.max-on .group + .group { margin-top:0; padding-top:0; border-top:0 }
+.max-on .group:not(:last-child) { padding-bottom:16px; border-bottom:2px solid color-mix(in srgb, var(--ink) 26%, transparent) }
 .group li.beyond { display:none } .max-on .group li.beyond { display:block }
 .max-on .more-link, .max-on .show-all { display:none }
 .max-on.clamp .d { display:block; -webkit-line-clamp:unset; overflow:visible }
@@ -1314,7 +1343,7 @@ def main(argv=None):
         with open(path, encoding="utf-8") as handle:
             fragments.append((os.path.basename(path), json.load(handle)))
     report, problems = merged(report, fragments)
-    problems += problems_in(report, digest)
+    problems += located(problems_in(report, digest), fragments)
     sys.stdout.reconfigure(encoding="utf-8")
     if problems:
         print("the report does not match the schema, so nothing was written:")
