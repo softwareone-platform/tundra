@@ -1,4 +1,4 @@
-<!-- translated from README.md, source sha256 731b206b045a0a116da3e74f6a9628cb450283e81f88c0c0080b2a891983cc3f; see CLAUDE.md "Translations of the root README" before editing -->
+<!-- translated from README.md, source sha256 3e331d2ff9d72d6b8fa02b5eae808ca8661a7741052075c2e9f6b25d098e7f0d; see CLAUDE.md "Translations of the root README" before editing -->
 <div align="center">
 
 <picture>
@@ -40,7 +40,7 @@ SoftwareOne Platform 的 Claude Code plugin marketplace。
 
 四個 plugin，把一張工單帶到經過審查的 pull request。它們放在 [issue-to-pr](https://github.com/softwareone-platform/issue-to-pr/blob/main/README.zh-TW.md)，並且一起發布。`issue-to-pr-pipeline` 執行整個流程；在 Claude Code v2.1.143 或更新的版本上，安裝它就會一併安裝另外三個，而那三個也都能獨立使用。
 
-<img alt="resolve-issue-dashboard 正在追蹤一次執行：依 repository 分組的執行清單、pipeline 的十一個步驟排成的環、token 統計，以及每個 agent 的工具呼叫" src="docs/issue-to-pr/dashboard.png">
+<img alt="resolve-issue-dashboard 正在追蹤一次執行：依 repository 分組的執行清單、pipeline 的十一個步驟排成的環、token 統計，以及每個 agent 的工具呼叫" src="docs/issue-to-pr/dashboard.png" width="560">
 
 | Plugin | 做什麼 |
 |---|---|
@@ -63,7 +63,7 @@ SoftwareOne Platform 的 Claude Code plugin marketplace。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/whoami/thumbnails-dark.png">
-  <img alt="whoami 報告的縮圖：標題與摘要、你做得好和常漏掉的一個面向、一張流程圖，以及表格" src="docs/whoami/thumbnails-light.png" width="480">
+  <img alt="whoami 報告的縮圖：標題與摘要、你做得好和常漏掉的一個面向、一張流程圖，以及表格" src="docs/whoami/thumbnails-light.png" width="360">
 </picture>
 
 安裝指令：
@@ -78,7 +78,7 @@ SoftwareOne Platform 的 Claude Code plugin marketplace。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/remind-me/thumbnails-dark.png">
-  <img alt="remind-me 頁面的縮圖：單日概要、放大一張卡片的期間報告、一個 repository 在整段期間的頁面，以及一個 session" src="docs/remind-me/thumbnails-light.png" width="480">
+  <img alt="remind-me 頁面的縮圖：單日概要、放大一張卡片的期間報告、一個 repository 在整段期間的頁面，以及一個 session" src="docs/remind-me/thumbnails-light.png" width="360">
 </picture>
 
 安裝指令：
