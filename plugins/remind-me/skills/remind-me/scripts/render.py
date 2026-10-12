@@ -351,7 +351,7 @@ def minutes(stamp):
 def shown(stamp):
     """A stamp as the page prints it: the time alone on one day's page, the date as well on a range's."""
     if VIEW["range"]:
-        return "%s %s" % (day_of(stamp)[5:], stamp.partition(" ")[2])
+        return stamp
     return stamp.partition(" ")[2]
 
 
@@ -490,7 +490,7 @@ def dated(where, session):
     if not VIEW["range"]:
         return where
     day = day_of(session["last"])
-    chip = '<span class="date"><time datetime="%s">%s</time></span>' % (e(day, quote=True), e(day[5:]))
+    chip = '<span class="date"><time datetime="%s">%s</time></span>' % (e(day, quote=True), e(day))
     if where:
         return where.replace('<div class="where">', '<div class="where">' + chip + '<span class="sep">\u00b7</span>', 1)
     return '<div class="where">%s</div>' % chip
@@ -546,10 +546,8 @@ def grouped_card(kind, badge, rows_by_group, labels, clamp=False, key=None):
 def item_row(content, session, key, linked):
     """Above the session level an item leads to its session; on the session's own page it is the destination, so it stays plain."""
     anchor = "i-%s-%s" % (session["id"], key)
-    # a maximised card on a range sets a heading over each day, from the day its session last worked on the item
-    day = ' data-day="%s"' % e(day_of(session["last"]), quote=True) if VIEW["range"] and linked else ""
     if linked:
-        return '<li data-go="s-%s" data-item="%s"%s tabindex="0">%s</li>' % (e(session["id"], quote=True), e(anchor, quote=True), day, content)
+        return '<li data-go="s-%s" data-item="%s" tabindex="0">%s</li>' % (e(session["id"], quote=True), e(anchor, quote=True), content)
     return '<li id="%s">%s</li>' % (e(anchor, quote=True), content)
 
 
@@ -572,9 +570,19 @@ def open_cards(pairs, labels, every_kind, where, linked=True, groups=None):
     return cards
 
 
-def lane(title, cards, empty):
+def folded(title, content, counts="", open_=True):
+    """A row of cards under a title that folds it away, the same at every level, with the row's counts beside the title."""
+    return ('<details class="folded"%s><summary class="lanetitle"><span class="chev">%s</span>%s<span class="counts">%s</span></summary>%s</details>'
+            % (" open" if open_ else "", icon("chevron"), e(title), counts, content))
+
+
+def kind_counts(totals):
+    return "".join('<span class="kind %s">%s%s %d</span>' % (kind, icon(kind), e(label), total) for kind, label, total in totals if total)
+
+
+def lane(title, cards, empty, counts="", open_=True):
     content = '<div class="cards">%s</div>' % "".join(cards) if cards else '<div class="card empty">%s%s</div>' % (icon("action"), e(empty))
-    return '<p class="lanetitle">%s</p>%s' % (e(title), content)
+    return folded(title, content, counts, open_)
 
 
 def happened_cards(entries, report, labels, linked, where, groups=None):
@@ -598,8 +606,16 @@ def happened_cards(entries, report, labels, linked, where, groups=None):
 def lanes(pairs, entries, report, labels, linked):
     """What is still open, then what happened."""
     happened = happened_cards(entries, report, labels, linked, lambda group, session: "")
-    return (lane(labels["still_open"], open_cards(pairs, labels, False, lambda group, session: "", linked), labels["nothing_open"])
-            + lane(labels["what_happened"], happened, labels["nothing_happened"]))
+    return (lane(labels["still_open"], open_cards(pairs, labels, False, lambda group, session: "", linked), labels["nothing_open"], open_counts(pairs, labels))
+            + lane(labels["what_happened"], happened, labels["nothing_happened"], happened_counts(entries, report, labels)))
+
+
+def open_counts(pairs, labels):
+    return kind_counts([(kind, labels[kind], sum(1 for pair in pairs if pair[0]["kind"] == kind)) for kind in KINDS])
+
+
+def happened_counts(entries, report, labels):
+    return kind_counts([(kind, labels[key], sum(len(body_of(report, session).get(key, [])) for _, session in entries)) for key, kind, _ in TWINS])
 
 
 def timeline(groups, span, labels, title, report, selected=None):
@@ -608,7 +624,7 @@ def timeline(groups, span, labels, title, report, selected=None):
         axis = VIEW["axis"]
         # the days with sessions are labelled, Mondays stand out, and the connector may drop down any column edge
         ticks = "".join('<span class="dtick%s" style="left:%.3f%%"><time datetime="%s">%s</time></span>'
-                        % (" mon" if column["monday"] else "", column["left"] + column["width"] / 2, column["day"], column["day"][5:])
+                        % (" mon" if column["monday"] else "", column["left"] + column["width"] / 2, column["day"], column["day"])
                         for column in axis["columns"] if not column.get("gap"))
         cuts = " ".join("%.3f" % column["left"] for column in axis["columns"][1:])
         guides = "".join('<span class="gap" style="left:%.3f%%;width:%.3f%%"></span>' % (column["left"], column["width"]) if column.get("gap")
@@ -683,20 +699,17 @@ def overview_panel(digest, report, labels, groups, span):
     last = stamp_html(max(session["last"] for session in all_sessions(digest)))
     return (trail(("", e(labels["all_open"]))), head
             + timeline(groups, span, labels, '%s <span>%s–%s</span>' % (e(labels["timeline"]), first, last), report)
-            + '<p class="lanetitle">%s</p><div class="cards">%s</div>' % (e(labels["still_open"]), "".join(cards))
+            + folded(labels["still_open"], '<div class="cards">%s</div>' % "".join(cards), open_counts(pairs, labels))
             + folded_happened(groups, report, labels))
 
 
 def folded_happened(groups, report, labels):
+    """The overview opens on what is still open, so what happened starts folded."""
     entries = [(group, session) for group, _ in groups for session in by_time(group)]
     cards = happened_cards(entries, report, labels, True, lambda group, session: "", groups=groups)
     if not cards:
         return ""
-    counts = "".join('<span class="kind %s">%s%s %d</span>' % (kind, icon(kind), e(labels[key]), total)
-                     for key, kind, _ in TWINS
-                     for total in [sum(len(body_of(report, session).get(key, [])) for _, session in entries)] if total)
-    return ('<details class="folded"><summary class="lanetitle">%s%s<span class="counts">%s</span></summary><div class="cards">%s</div></details>'
-            % (icon("chevron"), e(labels["what_happened"]), counts, "".join(cards)))
+    return folded(labels["what_happened"], '<div class="cards">%s</div>' % "".join(cards), happened_counts(entries, report, labels), open_=False)
 
 
 def repository_head(group, labels, running):
@@ -986,8 +999,11 @@ svg.link path { fill:none; stroke:var(--lv); stroke-width:2 } svg.link circle { 
 .tile.emoji { background:color-mix(in srgb, var(--accent) 10%, transparent); font-weight:400 }
 .folded > summary { cursor:pointer; list-style:none; margin:4px 0 0 }
 .folded > summary::-webkit-details-marker { display:none }
-.folded > summary .i { transition:transform .15s } .folded[open] > summary .i { transform:rotate(90deg) }
+/* only the chevron turns: the counts beside the title carry their kinds' icons too */
+.folded > summary .chev { display:inline-grid } .folded > summary .chev .i { transition:transform .15s } .folded[open] > summary .chev .i { transform:rotate(90deg) }
 .folded > summary .counts { display:inline-flex; gap:6px; letter-spacing:0; text-transform:none; font-weight:600 }
+/* the counts say what a folded row holds, and an open row's cards already head each kind with its count */
+.folded[open] > summary .counts { display:none }
 .folded > summary:hover { color:var(--ink) }
 .folded[open] > .cards { margin-top:22px }
 .items { margin:0; padding:0; list-style:none; display:grid; gap:12px }
@@ -1014,10 +1030,15 @@ svg.link path { fill:none; stroke:var(--lv); stroke-width:2 } svg.link circle { 
 .kindhead .maxbtn .i { width:15px; height:15px }
 .kindhead .maxbtn:hover { color:var(--ink); background:color-mix(in srgb, var(--ink) 8%, transparent) }
 .maxbtn.shrink, .max-on .maxbtn.grow { display:none } .max-on .maxbtn.shrink { display:inline-grid; margin-left:auto }
-/* a maximised card takes its row alone and shows every item in columns, its repositories or its days kept whole */
+/* a maximised card takes its row alone and shows every item in columns, each repository kept whole */
 .cards.maxed { grid-template-columns:minmax(0, 1fr) } .cards.maxed > .col:not(.max-on) { display:none }
-.max-on .items, .max-on .groups { display:block; column-width:380px; column-gap:34px }
+/* two columns at most, since more made each item a short, tall strip on a wide screen, and one where two would be cramped */
+.max-on .items, .max-on .groups { display:block; columns:2; column-gap:34px }
+@media (max-width: 1200px) { .max-on .items, .max-on .groups { columns:1 } }
 .max-on .items li { break-inside:avoid; margin-bottom:12px }
+/* in columns the rule goes under an item, since one above would also top the next column */
+.max-on .items li { border-top:0; padding-top:0; padding-bottom:12px; border-bottom:1px solid var(--line) } .max-on .items li:last-child { border-bottom:0 }
+.max-on .group .items li { border-bottom-color:color-mix(in srgb, var(--ink) 6%, transparent) }
 .max-on .groups .items { column-width:auto; columns:auto } .max-on .group { break-inside:avoid; display:block; margin-bottom:18px }
 /* in columns the line goes under a group, since one above would also head the next column */
 .max-on .group + .group { margin-top:0; padding-top:0; border-top:0 }
@@ -1025,11 +1046,14 @@ svg.link path { fill:none; stroke:var(--lv); stroke-width:2 } svg.link circle { 
 .group li.beyond { display:none } .max-on .group li.beyond { display:block }
 .max-on .more-link, .max-on .show-all { display:none }
 .max-on.clamp .d { display:block; -webkit-line-clamp:unset; overflow:visible }
-.items li.dayhead { font-size:12px; font-weight:700; color:var(--faint); border-top:0; padding:6px 0 4px; break-after:avoid; cursor:default }
-.max-on .items li.dayhead { border-bottom:1px solid var(--line); margin-bottom:8px }
-.tabs { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 -6px }
-.tab { display:inline-flex; gap:8px; align-items:center; font-size:13px; padding:5px 10px; border-radius:9px; border:1px solid var(--line); background:var(--card); cursor:pointer; color:var(--soft) }
-.tab.on { color:var(--ink); border-color:color-mix(in srgb, var(--ink) 40%, transparent); font-weight:600 }
+/* one strip of tabs on a shared rule, each only its kind's icon, name and count, so nothing is framed inside a frame */
+.tabs { display:flex; flex-wrap:wrap; border-bottom:1px solid var(--line); margin:0 0 -6px }
+.tab { display:inline-flex; gap:6px; align-items:center; font-size:13px; padding:8px 14px; margin-bottom:-1px; border:0; border-bottom:2px solid transparent;
+  background:none; cursor:pointer; color:var(--soft); --tab:var(--ink) }
+.tab.decision { --tab:var(--decision) } .tab.action { --tab:var(--action) } .tab.question { --tab:var(--question) }
+.tab .i { width:14px; height:14px; color:var(--tab) } .tab b { font-weight:600; font-variant-numeric:tabular-nums }
+.tab:not(.on):hover { color:var(--ink); background:color-mix(in srgb, var(--ink) 5%, transparent) }
+.tab.on { color:var(--ink); font-weight:600; border-bottom-color:var(--tab) }
 .ticks .dtick i { display:block; font-style:normal; font-size:10px; opacity:.75 }
 .empty { padding:12px 18px; color:var(--soft); display:flex; gap:8px; align-items:center; border-style:dashed }
 .empty .i { color:var(--done) }
@@ -1057,13 +1081,22 @@ SCRIPT = """
   function mark() { document.querySelectorAll('[data-theme-set]').forEach(function (b) { b.setAttribute('aria-checked', String(b.getAttribute('data-theme-set') === current())); }); }
   try { var saved = localStorage.getItem('remind-me-theme'); if (saved === 'light' || saved === 'dark') { root.setAttribute('data-theme', saved); } } catch (ignored) { }
   mark();
-  // dates are written as YYYY-MM-DD and rewritten here in the page's language, built from their parts so no time zone moves the day
+  // a bare language such as en takes the reader's own region from the browser, so a British reader gets the day first,
+  // while a report that names its region or script keeps it, so zh-TW never turns into simplified weekdays
+  function locale() {
+    var lang = root.lang || 'en';
+    if (lang.indexOf('-') >= 0) { return lang; }
+    var asked = [].concat(navigator.languages || [], navigator.language || []).filter(function (l) { return l && l.toLowerCase().split('-')[0] === lang.toLowerCase(); })[0];
+    return asked || lang;
+  }
+  // dates are written as YYYY-MM-DD and rewritten here in the page's language, built from their parts so no time zone moves the day,
+  // with the month as a word, since 10/9 reads as the tenth of September in half the world
   function localise(scope) {
-    var day, weekday, number;
+    var day, weekday, number, where = locale();
     try {
-      day = new Intl.DateTimeFormat(root.lang, { month: 'numeric', day: 'numeric' });
-      weekday = new Intl.DateTimeFormat(root.lang, { weekday: 'short' });
-      number = new Intl.DateTimeFormat(root.lang, { day: 'numeric' });
+      day = new Intl.DateTimeFormat(where, { month: 'short', day: 'numeric' });
+      weekday = new Intl.DateTimeFormat(where, { weekday: 'short' });
+      number = new Intl.DateTimeFormat(where, { day: 'numeric' });
     } catch (ignored) { return; }
     var ticks = document.querySelectorAll('.ticks .dtick time');
     scope.querySelectorAll('time[datetime]').forEach(function (t) {
@@ -1082,7 +1115,7 @@ SCRIPT = """
     });
   }
   localise(document);
-  // one card of a row takes the row, with a tab for each card of it; the day headings a range's items get are made here and removed on restore
+  // one card of a row takes the row, with a tab for each card of it
   function maximise(panel, kind) {
     panel.querySelectorAll('.cards').forEach(function (box) {
       var target = kind ? [].filter.call(box.children, function (c) { return c.getAttribute('data-kind') === kind; })[0] : null;
@@ -1093,29 +1126,31 @@ SCRIPT = """
         var on = col === target;
         col.classList.toggle('max-on', on);
         col.querySelectorAll('li.more').forEach(function (li) { li.hidden = !on; });
-        col.querySelectorAll('li.dayhead').forEach(function (li) { li.remove(); });
-        if (on && !col.querySelector('.groups')) {
-          var last = null;
-          col.querySelectorAll('.items > li[data-day]').forEach(function (li) {
-            var d = li.getAttribute('data-day');
-            if (d === last) { return; }
-            last = d;
-            var head = document.createElement('li'); head.className = 'dayhead'; head.setAttribute('aria-hidden', 'true');
-            var t = document.createElement('time'); t.setAttribute('datetime', d); t.textContent = d; head.appendChild(t);
-            li.parentNode.insertBefore(head, li); localise(head);
-          });
-        }
       });
       if (target) {
         var row = document.createElement('div'); row.className = 'tabs';
         [].forEach.call(box.children, function (col) {
           if (!col.getAttribute('data-kind')) { return; }
-          var tab = document.createElement('button'); tab.type = 'button'; tab.className = 'tab' + (col === target ? ' on' : '');
+          // the kind's colour is set by the card's own class, so the tab carries it too
+          var kinds = ['decision', 'action', 'question', 'twin'].filter(function (k) { return col.classList.contains(k); }).join(' ');
+          var tab = document.createElement('button'); tab.type = 'button'; tab.className = 'tab ' + kinds + (col === target ? ' on' : '');
           tab.setAttribute('data-max-kind', col.getAttribute('data-kind'));
-          tab.innerHTML = col.querySelector('.kindhead .kind').outerHTML + ' ' + col.getAttribute('data-count');
+          var badge = col.querySelector('.kindhead .kind'), name = document.createElement('span'), count = document.createElement('b');
+          name.textContent = badge.textContent.trim(); count.textContent = col.getAttribute('data-count');
+          tab.appendChild(badge.querySelector('svg').cloneNode(true)); tab.appendChild(name); tab.appendChild(count);
           row.appendChild(tab);
         });
         box.parentNode.insertBefore(row, box);
+      }
+    });
+    // a maximised card's row stays open and every other row folds, then each comes back as the reader left it
+    var shown = kind ? panel.querySelector('.cards > .col.max-on') : null, home = shown && shown.closest('details.folded');
+    panel.querySelectorAll('details.folded').forEach(function (row) {
+      if (home) {
+        if (!row.hasAttribute('data-was')) { row.setAttribute('data-was', row.open ? 'open' : ''); }
+        row.open = row === home;
+      } else if (row.hasAttribute('data-was')) {
+        row.open = row.getAttribute('data-was') === 'open'; row.removeAttribute('data-was');
       }
     });
   }
@@ -1316,7 +1351,7 @@ def summary(report, digest, out):
             if not pairs:
                 continue
             lines += ["", "### %s" % name_of(group)]
-            lines += ["- %s: %s (%s)" % (labels[item["kind"]], item["text"], day_of(session["last"])[5:]) for item, _, session, _ in pairs[:PER_REPOSITORY]]
+            lines += ["- %s: %s (%s)" % (labels[item["kind"]], item["text"], day_of(session["last"])) for item, _, session, _ in pairs[:PER_REPOSITORY]]
             if len(pairs) > PER_REPOSITORY:
                 lines.append("- %s" % fill(labels["more_in_repository"], n=len(pairs) - PER_REPOSITORY, repository=name_of(group)))
             continue

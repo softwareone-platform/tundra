@@ -78,7 +78,7 @@ Read [`report-schema.md`](report-schema.md) first: what you judge here is what f
 - **Across days and sessions.** A range is judged as a whole, and only where each thing ended up is reported:
   - An item raised in one session and settled in a later one, in the same repository or another, belongs to the session that settled it, in the list its outcome puts it in; the session that raised it no longer lists it.
   - An item still open in several sessions is listed once, under the latest session that raised it.
-  - A decision changed later in the range is listed once, as the last choice, with what it replaced and the day of the replaced choice in brackets, the day as `MM-DD` from the digest: "use Y (replacing X from 10-06)". Work already done on the earlier choice stays in `done`.
+  - A decision changed later in the range is listed once, as the last choice, with what it replaced and the day of the replaced choice in brackets, the day as `YYYY-MM-DD` from the digest, since a month and a day alone read either way round: "use Y (replacing X from 2026-10-06)". Work already done on the earlier choice stays in `done`.
 
 Then reconcile every item with the live state, which is what is true now:
 
